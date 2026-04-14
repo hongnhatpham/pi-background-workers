@@ -82,6 +82,61 @@ function renderTree(tasks: DelegationTask[]): string {
   return lines.join("\n");
 }
 
+function collectSubtreeTaskIds(taskId: string): Set<string> {
+  const tasks = store.listTasks();
+  const byId = new Map(tasks.map((task) => [task.id, task]));
+  const ids = new Set<string>();
+
+  const walk = (currentId: string) => {
+    if (ids.has(currentId)) return;
+    ids.add(currentId);
+    const task = byId.get(currentId);
+    if (!task) return;
+    for (const childId of task.childIds) walk(childId);
+  };
+
+  walk(taskId);
+  return ids;
+}
+
+function renderTaskSubtree(taskId: string): string {
+  const tasks = store.listTasks();
+  const byId = new Map(tasks.map((task) => [task.id, task]));
+  const root = byId.get(taskId);
+  if (!root) return "<task not found>";
+  const lines: string[] = [];
+
+  const walk = (task: DelegationTask, depth: number) => {
+    const indent = "  ".repeat(depth);
+    const state =
+      task.status === "running" ? "▶" :
+      task.status === "queued" ? "…" :
+      task.status === "done" ? "✓" :
+      task.status === "failed" ? "✗" : "⊘";
+    const note = task.latestNote ? ` [${truncate(task.latestNote, 48)}]` : "";
+    lines.push(`${indent}${state} ${task.id.slice(0, 8)} ${truncate(task.title, 72)}${note}`);
+    for (const childId of task.childIds) {
+      const child = byId.get(childId);
+      if (child) walk(child, depth + 1);
+    }
+  };
+
+  walk(root, 0);
+  return lines.join("\n");
+}
+
+function renderTaskLineage(task: DelegationTask): string {
+  const tasks = store.listTasks();
+  const byId = new Map(tasks.map((item) => [item.id, item]));
+  const chain: string[] = [];
+  let current: DelegationTask | undefined = task;
+  while (current) {
+    chain.unshift(`${current.id.slice(0, 8)} ${truncate(current.title, 52)}`);
+    current = current.parentId ? byId.get(current.parentId) : undefined;
+  }
+  return chain.join("\n→ ");
+}
+
 function renderEvents(): string {
   const events = store.listEvents();
   if (events.length === 0) return "<no recent events>";
@@ -92,11 +147,12 @@ function renderEvents(): string {
 }
 
 function renderTaskEvents(taskId: string): string {
-  const events = store.listEvents().filter((event) => event.taskId === taskId);
-  if (events.length === 0) return "<no recent events for task>";
+  const relatedIds = collectSubtreeTaskIds(taskId);
+  const events = store.listEvents().filter((event) => event.taskId && relatedIds.has(event.taskId));
+  if (events.length === 0) return "<no recent events for task subtree>";
   return events
-    .slice(-12)
-    .map((event) => `- ${event.at} ${event.kind} :: ${truncate(event.message, 160)}`)
+    .slice(-16)
+    .map((event) => `- ${event.at} ${event.kind}${event.taskId ? ` ${event.taskId.slice(0, 8)}` : ""} :: ${truncate(event.message, 160)}`)
     .join("\n");
 }
 
@@ -217,6 +273,10 @@ async function executeDelegatedTask(
   const task = store.createTask(input);
   syncStatus(ctx);
 
+  if (task.parentId) {
+    store.noteTask(task.parentId, `spawned child ${task.id.slice(0, 8)} (${task.mode}): ${truncate(task.title, 96)}`);
+  }
+
   onUpdate?.({
     content: [{ type: "text", text: `Queued ${task.id.slice(0, 8)}: ${task.title}` }],
     details: { taskId: task.id },
@@ -227,6 +287,12 @@ async function executeDelegatedTask(
 
   const refreshed = store.getTask(task.id) ?? task;
   const resultText = refreshed.resultSummary || result.summary;
+  if (refreshed.parentId) {
+    store.noteTask(
+      refreshed.parentId,
+      `child ${refreshed.id.slice(0, 8)} ${refreshed.status}: ${truncate(resultText, 120)}`,
+    );
+  }
   onUpdate?.({
     content: [{ type: "text", text: `${refreshed.status.toUpperCase()} ${task.id.slice(0, 8)}\n${resultText}` }],
     details: { taskId: task.id },
@@ -303,7 +369,7 @@ export default function subagentOrchestratorExtension(pi: ExtensionAPI) {
       showOutput(
         pi,
         "Delegated task inspection",
-        `${renderTaskDetails(resolved.task)}\n\nRecent task events:\n${renderTaskEvents(resolved.task.id)}`,
+        `${renderTaskDetails(resolved.task)}\n\nLineage:\n${renderTaskLineage(resolved.task)}\n\nTask subtree:\n${renderTaskSubtree(resolved.task.id)}\n\nRecent related events:\n${renderTaskEvents(resolved.task.id)}`,
       );
     },
   });
