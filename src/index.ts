@@ -91,6 +91,15 @@ function renderEvents(): string {
     .join("\n");
 }
 
+function renderTaskEvents(taskId: string): string {
+  const events = store.listEvents().filter((event) => event.taskId === taskId);
+  if (events.length === 0) return "<no recent events for task>";
+  return events
+    .slice(-12)
+    .map((event) => `- ${event.at} ${event.kind} :: ${truncate(event.message, 160)}`)
+    .join("\n");
+}
+
 function renderTaskDetails(task: DelegationTask): string {
   return [
     `id: ${task.id}`,
@@ -100,14 +109,33 @@ function renderTaskDetails(task: DelegationTask): string {
     `model: ${task.model ?? "<default>"}`,
     `cwd: ${task.cwd}`,
     `status: ${task.status}`,
+    `parent: ${task.parentId ?? "<root>"}`,
+    `children: ${task.childIds.length ? task.childIds.join(", ") : "<none>"}`,
     `depth: ${task.depth}/${task.maxDepth}`,
     `nested: ${task.allowNestedDelegation ? "yes" : "no"}`,
     `memory-read: ${task.includeMemoryRead ? "yes" : "no"}`,
     `allowed tools: ${task.allowedTools.join(", ")}`,
+    `created: ${task.createdAt}`,
+    `updated: ${task.updatedAt}`,
     task.latestNote ? `latest: ${task.latestNote}` : undefined,
     task.resultSummary ? `summary: ${task.resultSummary}` : undefined,
     task.errorMessage ? `error: ${task.errorMessage}` : undefined,
   ].filter(Boolean).join("\n");
+}
+
+function resolveTaskReference(taskRef: string): { task?: DelegationTask; error?: string } {
+  const ref = taskRef.trim();
+  if (!ref) return { error: "Usage: /delegate-inspect <taskId>" };
+  store.reload();
+  const tasks = store.listTasks();
+  const exact = tasks.find((task) => task.id === ref);
+  if (exact) return { task: exact };
+  const matches = tasks.filter((task) => task.id.startsWith(ref));
+  if (matches.length === 1) return { task: matches[0] };
+  if (matches.length > 1) {
+    return { error: `Ambiguous task id prefix. Matches: ${matches.slice(0, 8).map((task) => task.id.slice(0, 8)).join(", ")}` };
+  }
+  return { error: `Task not found: ${ref}` };
 }
 
 function syncStatus(ctx: ExtensionContext): void {
@@ -128,14 +156,22 @@ function defaultTitle(task: string, mode: DelegationMode): string {
   return `${mode}: ${truncate(task, 64)}`;
 }
 
+function resolveParentTaskId(params: DelegateTaskParamsType): string | undefined {
+  const explicitParent = params.parentTaskId?.trim();
+  if (explicitParent) return explicitParent;
+  const inheritedParent = process.env.PI_DELEGATION_PARENT_TASK_ID?.trim();
+  return inheritedParent || undefined;
+}
+
 function buildTaskInput(params: DelegateTaskParamsType, ctx: ExtensionContext): DelegateTaskInput {
   const mode = params.mode ?? "general";
-  const parent = params.parentTaskId ? store.getTask(params.parentTaskId) : undefined;
+  const parentTaskId = resolveParentTaskId(params);
+  const parent = parentTaskId ? store.getTask(parentTaskId) : undefined;
   const allowNestedDelegation = params.allowNestedDelegation ?? false;
   const maxDepth = Math.max(parent?.maxDepth ?? 0, Math.max(0, Math.floor(params.maxDepth ?? 2)));
   const includeMemoryRead = params.includeMemoryRead ?? true;
   const provisional: Omit<DelegationTask, "id" | "createdAt" | "updatedAt" | "status" | "childIds"> = {
-    parentId: params.parentTaskId,
+    parentId: parentTaskId,
     title: params.title?.trim() || defaultTitle(params.task, mode),
     agent: parent ? "subagent" : "subagent",
     mode,
@@ -252,6 +288,23 @@ export default function subagentOrchestratorExtension(pi: ExtensionAPI) {
     handler: async (_args, ctx) => {
       syncStatus(ctx);
       showOutput(pi, "Delegation log", renderEvents());
+    },
+  });
+
+  pi.registerCommand("delegate-inspect", {
+    description: "Inspect a delegated task by full id or unique prefix",
+    handler: async (args, ctx) => {
+      syncStatus(ctx);
+      const resolved = resolveTaskReference(args);
+      if (!resolved.task) {
+        ctx.ui.notify(resolved.error ?? "Task not found", "error");
+        return;
+      }
+      showOutput(
+        pi,
+        "Delegated task inspection",
+        `${renderTaskDetails(resolved.task)}\n\nRecent task events:\n${renderTaskEvents(resolved.task.id)}`,
+      );
     },
   });
 
