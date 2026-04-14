@@ -82,16 +82,19 @@ pi-subagent-orchestrator-extension/
 The current scaffold includes:
 
 - task/event schema
-- in-memory task store
-- JSON snapshot + event log persistence
+- observable task store with JSON snapshot + event log persistence
+- real subprocess worker execution through Pi JSON mode
 - Pi footer status
+- a delegated worker tool:
+  - `delegate_task`
 - commands:
   - `/delegate-status`
   - `/delegate-log`
   - `/delegate-clear`
+  - `/delegate-run <task>`
   - `/delegate-demo`
 
-`/delegate-demo` is just a small scaffold helper for now so we can see the task graph working before wiring real subagent execution.
+Workers now run with bounded toolsets by mode, can optionally read memory for context, and are blocked from modifying MemPalace or soul files.
 
 ## Why a Pi extension?
 
@@ -107,6 +110,6 @@ For real worker execution, we can choose between:
 - **subprocess `pi` workers** first, borrowing from Pi's subagent example
 - **SDK-managed sessions** later if we want finer control
 
-My recommendation is:
-- v1: subprocess workers + observable task graph
+Current recommendation and status:
+- v1: subprocess workers + observable task graph ✅
 - v2: richer orchestration, scheduling, and Quickshell UI

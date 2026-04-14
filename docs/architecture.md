@@ -109,16 +109,19 @@ That gives us:
 
 ### v1
 - observable task store
-- mock/demo tasks
 - status + commands
 - disk persistence
+- real subprocess worker execution
+- reduced tool access per task mode
+- read-only memory access allowed
+- worker guard blocking memory writes and soul-file changes
 
 ### v2
-- real subprocess subagent execution
-- structured progress updates from workers
-- child task support
+- richer structured progress updates from workers
+- explicit nested delegation policy and better parent/child execution flows
+- cancellations, retries, queueing
 
 ### v3
 - scheduled/proactive orchestration
 - Quickshell panel
-- cancellation, retries, queueing, prioritization
+- prioritization and broader life/work automation
