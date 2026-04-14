@@ -12,6 +12,12 @@ const BLOCKED_MEMORY_TOOLS = new Set([
   "memory_kg_invalidate",
 ]);
 
+function allowedToolSet(): Set<string> | undefined {
+  const raw = process.env.PI_DELEGATION_ALLOWED_TOOLS?.trim();
+  if (!raw) return undefined;
+  return new Set(raw.split(",").map((item) => item.trim()).filter(Boolean));
+}
+
 function resolveProtectedSoulRoots(): string[] {
   return [
     path.resolve(os.homedir(), ".pi", "agent", "soul"),
@@ -36,6 +42,11 @@ export default function workerGuardExtension(pi: ExtensionAPI) {
   (globalThis as any).__delegateWorkerGuardLoaded = true;
 
   pi.on("tool_call", async (event) => {
+    const allowed = allowedToolSet();
+    if (allowed && !allowed.has(event.toolName)) {
+      return { block: true, reason: `Tool ${event.toolName} is not allowed for this delegated worker.` };
+    }
+
     if (BLOCKED_MEMORY_TOOLS.has(event.toolName)) {
       return { block: true, reason: `Subagents may not modify memory via ${event.toolName}.` };
     }

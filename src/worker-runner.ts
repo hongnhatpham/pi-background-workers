@@ -75,6 +75,8 @@ function defaultToolsForMode(mode: DelegationMode): string[] {
   }
 }
 
+const BUILTIN_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"] as const;
+
 function memoryReadTools(): string[] {
   return ["memory_search", "memory_diary_read", "memory_kg_query"];
 }
@@ -123,13 +125,14 @@ export async function runDelegatedWorker(params: WorkerRunParams, signal: AbortS
     "-e", extensionPath,
     "-e", guardPath,
     "--append-system-prompt", promptFile.filePath,
-    "--tools", allowedTools.join(","),
+    "--tools", BUILTIN_TOOLS.join(","),
   ];
   if (task.model?.trim()) args.push("--model", task.model.trim());
   args.push(objective);
 
   const invocation = getPiInvocation(args);
   const messages: Message[] = [];
+  let latestAssistantOutput = "";
   let stderr = "";
   let buffer = "";
   let wasAborted = false;
@@ -147,6 +150,7 @@ export async function runDelegatedWorker(params: WorkerRunParams, signal: AbortS
         PI_DELEGATION_DEPTH: String(task.depth),
         PI_DELEGATION_MAX_DEPTH: String(task.maxDepth),
         PI_DELEGATION_PARENT_TASK_ID: task.id,
+        PI_DELEGATION_ALLOWED_TOOLS: allowedTools.join(","),
       },
     });
 
@@ -159,13 +163,27 @@ export async function runDelegatedWorker(params: WorkerRunParams, signal: AbortS
         return;
       }
 
+      if (event.type === "message_update" && event.assistantMessageEvent) {
+        const update = event.assistantMessageEvent as { type?: string; delta?: string; content?: string };
+        if (update.type === "text_delta" && typeof update.delta === "string") {
+          latestAssistantOutput += update.delta;
+        }
+        if (update.type === "text_end" && typeof update.content === "string") {
+          latestAssistantOutput = update.content;
+          if (update.content.trim()) store.noteTask(task.id, truncate(update.content, 160));
+        }
+      }
+
       if (event.type === "message_end" && event.message) {
         const message = event.message as Message;
         messages.push(message);
         const toolPreview = toolCallPreview(message);
         const textPreview = latestAssistantText([message]);
         if (toolPreview) store.noteTask(task.id, `tool: ${toolPreview}`);
-        else if (textPreview) store.noteTask(task.id, truncate(textPreview, 160));
+        else if (textPreview) {
+          latestAssistantOutput = textPreview;
+          store.noteTask(task.id, truncate(textPreview, 160));
+        }
       }
 
       if (event.type === "tool_result_end" && event.message) {
@@ -186,7 +204,7 @@ export async function runDelegatedWorker(params: WorkerRunParams, signal: AbortS
 
     proc.on("close", (code) => {
       if (buffer.trim()) processLine(buffer);
-      const summary = truncate(latestAssistantText(messages) || stderr || `${task.agent} finished with exit code ${code ?? 0}`, 500);
+      const summary = truncate(latestAssistantOutput || latestAssistantText(messages) || stderr || `${task.agent} finished with exit code ${code ?? 0}`, 500);
       if (wasAborted) {
         store.finishTask(task.id, "cancelled", "worker aborted", { errorMessage: stderr || "aborted" });
         resolve({ status: "cancelled", summary, errorMessage: stderr || "aborted" });
