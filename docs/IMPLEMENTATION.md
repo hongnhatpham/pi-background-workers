@@ -145,15 +145,15 @@ Define one generic worker prompt and one output contract.
 
 ### Tasks
 
-- [ ] Add `src/worker-prompt.ts`
-- [ ] Define the generic worker instructions
-- [ ] Include required final output sections:
-  - [ ] `## Done`
-  - [ ] `## Files Changed`
-  - [ ] `## Notes`
-- [ ] Define how task metadata is embedded into the worker prompt
-- [ ] Decide whether prompt is inline or temp-file based
-- [ ] Add tests for prompt generation if helpful
+- [x] Add `src/worker-prompt.ts`
+- [x] Define the generic worker instructions
+- [x] Include required final output sections:
+  - [x] `## Done`
+  - [x] `## Files Changed`
+  - [x] `## Notes`
+- [x] Define how task metadata is embedded into the worker prompt
+- [x] Decide whether prompt is inline or temp-file based
+- [x] Add tests for prompt generation if helpful
 
 ### Acceptance criteria
 
@@ -171,24 +171,24 @@ Run a Pi subprocess in the background and supervise its lifecycle.
 
 ### Tasks
 
-- [ ] Add `src/worker-runner.ts`
-- [ ] Add Pi invocation helper for child workers
-- [ ] Launch Pi in JSON mode with isolated execution
-- [ ] Stream stdout lines and parse JSON events when possible
-- [ ] Capture stderr to file
-- [ ] Record process metadata:
-  - [ ] pid
-  - [ ] startedAt
-  - [ ] finishedAt
-  - [ ] exitCode
-- [ ] Promote task status transitions:
-  - [ ] `queued -> running`
-  - [ ] `running -> succeeded|failed|cancelled|timed_out`
-- [ ] Normalize final result into `result.json`
-- [ ] Add timeout handling
-- [ ] Add cancellation handling
+- [x] Add `src/worker-runner.ts`
+- [x] Add Pi invocation helper for child workers
+- [x] Launch Pi in JSON mode with isolated execution
+- [x] Stream stdout lines and parse JSON events when possible
+- [x] Capture stderr to file
+- [x] Record process metadata:
+  - [x] pid
+  - [x] startedAt
+  - [x] finishedAt
+  - [x] exitCode
+- [x] Promote task status transitions:
+  - [x] `queued -> running`
+  - [x] `running -> succeeded|failed|cancelled|timed_out`
+- [x] Normalize final result into `result.json`
+- [x] Add timeout handling
+- [x] Add cancellation handling
 - [ ] Add concurrency cap support
-- [ ] Add tests for runner helpers where feasible
+- [x] Add tests for runner helpers where feasible
 
 ### Acceptance criteria
 
