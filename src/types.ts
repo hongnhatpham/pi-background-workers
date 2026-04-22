@@ -41,6 +41,7 @@ export interface TaskRecord {
   error: string | null;
   latestNote: string | null;
   resultSummary: string | null;
+  reportedAt: string | null;
 }
 
 export interface TaskResult {
@@ -52,6 +53,8 @@ export interface TaskResult {
   notes: string;
   rawOutput: string;
   finishedAt: string;
+  outputFormatSatisfied: boolean;
+  validationIssues: string[];
 }
 
 export interface TaskEvent {

@@ -39,6 +39,7 @@ function makeTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
     error: null,
     latestNote: null,
     resultSummary: null,
+    reportedAt: null,
     ...overrides,
   };
 }
@@ -100,6 +101,8 @@ test("writeResult and getResult persist normalized task results", async () => {
     notes: "No blockers",
     rawOutput: "## Done\nImplemented",
     finishedAt: "2026-04-22T10:05:00.000Z",
+    outputFormatSatisfied: true,
+    validationIssues: [],
   };
 
   await store.writeResult(result);

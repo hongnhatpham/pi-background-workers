@@ -7,6 +7,7 @@ import type { TaskPriority, TaskRecord, TaskResult } from "./types.js";
 const STATUS_KEY = "pi-background-workers";
 const WIDGET_KEY = "pi-background-workers";
 const STATUS_POLL_MS = 2_000;
+const COMPLETION_MESSAGE_TYPE = "pi-background-workers-completion";
 
 function truncate(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text;
@@ -108,12 +109,14 @@ export function buildTaskResultWidget(task: TaskRecord, result: TaskResult): str
     `ID: ${task.id}`,
     `Status: ${result.status}`,
     `Finished: ${formatTimestamp(result.finishedAt)}`,
-    "",
-    "Done",
-    result.done || "(no Done section)",
-    "",
-    "Files Changed",
   ];
+
+  if (!result.outputFormatSatisfied) {
+    lines.push("", "Validation issues");
+    for (const issue of result.validationIssues) lines.push(`- ${issue}`);
+  }
+
+  lines.push("", "Done", result.done || "(no Done section)", "", "Files Changed");
 
   if (result.filesChanged.length > 0) {
     for (const file of result.filesChanged) lines.push(`- ${file}`);
@@ -185,6 +188,36 @@ export function buildDelegateTaskResult(task: TaskRecord, waitForResult: boolean
   };
 }
 
+export interface CompletionMessageDetails {
+  taskId: string;
+  title: string;
+  status: TaskResult["status"];
+  summary: string;
+  outputFormatSatisfied: boolean;
+  validationIssues: string[];
+  showCommand: string;
+  resultsCommand: string;
+}
+
+export function buildCompletionMessage(task: TaskRecord, result: TaskResult): { content: string; details: CompletionMessageDetails } {
+  const qualityNote = result.outputFormatSatisfied
+    ? ""
+    : `\nValidation issues: ${result.validationIssues.join(" ")}`;
+  return {
+    content: `Background task finished: ${task.title}\nSummary: ${result.summary}${qualityNote}\nUse /bg-results ${task.id} for the full normalized result.`,
+    details: {
+      taskId: task.id,
+      title: task.title,
+      status: result.status,
+      summary: result.summary,
+      outputFormatSatisfied: result.outputFormatSatisfied,
+      validationIssues: result.validationIssues,
+      showCommand: `/bg-show ${task.id}`,
+      resultsCommand: `/bg-results ${task.id}`,
+    },
+  };
+}
+
 export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
   let runtime: BackgroundWorkerRuntime | null = null;
   let statusTimer: NodeJS.Timeout | null = null;
@@ -210,13 +243,39 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
     }
   };
 
+  const deliverFinishedTaskReports = async (): Promise<void> => {
+    const activeRuntime = await ensureRuntime();
+    const groups = await activeRuntime.listTasks(20);
+    for (const task of groups.recent) {
+      if (task.reportedAt) continue;
+      const result = await activeRuntime.getTaskResult(task.id);
+      if (!result) continue;
+      const completion = buildCompletionMessage(task, result);
+      pi.sendMessage(
+        {
+          customType: COMPLETION_MESSAGE_TYPE,
+          content: completion.content,
+          display: true,
+          details: completion.details,
+        },
+        { triggerTurn: true, deliverAs: "followUp" },
+      );
+      await activeRuntime.store.updateTask({
+        ...task,
+        reportedAt: activeRuntime.now(),
+      });
+    }
+  };
+
   pi.on("session_start", async (_event, ctx) => {
     await ensureRuntime();
     await refreshStatus(ctx);
+    await deliverFinishedTaskReports();
     if (ctx.hasUI) {
       clearStatusTimer();
       statusTimer = setInterval(() => {
         void refreshStatus(ctx);
+        void deliverFinishedTaskReports();
       }, STATUS_POLL_MS);
     }
   });

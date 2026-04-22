@@ -83,6 +83,14 @@ function parseFilesChanged(section: string): string[] {
     .filter((line) => line.length > 0 && !/^no files changed\.?$/i.test(line));
 }
 
+function validateResultSections(done: string, filesChangedSection: string, notes: string): string[] {
+  const issues: string[] = [];
+  if (!done) issues.push("Missing ## Done section content.");
+  if (!filesChangedSection) issues.push("Missing ## Files Changed section content.");
+  if (!notes) issues.push("Missing ## Notes section content.");
+  return issues;
+}
+
 export function normalizeTaskResult(
   taskId: string,
   status: Extract<TaskStatus, "succeeded" | "failed" | "cancelled" | "timed_out">,
@@ -93,7 +101,11 @@ export function normalizeTaskResult(
   const filesChangedSection = parseSection(rawOutput, "Files Changed");
   const notes = parseSection(rawOutput, "Notes");
   const filesChanged = parseFilesChanged(filesChangedSection);
-  const summary = done || notes || rawOutput.trim() || status;
+  const validationIssues = validateResultSections(done, filesChangedSection, notes);
+  const outputFormatSatisfied = validationIssues.length === 0;
+  const summary = outputFormatSatisfied
+    ? (done || notes || rawOutput.trim() || status)
+    : ((done || notes || rawOutput.trim() || status).slice(0, 600));
 
   return {
     taskId,
@@ -104,6 +116,8 @@ export function normalizeTaskResult(
     notes,
     rawOutput,
     finishedAt,
+    outputFormatSatisfied,
+    validationIssues,
   };
 }
 
@@ -222,8 +236,12 @@ export async function runWorkerInBackground(options: WorkerRunOptions): Promise<
       finishedAt,
       exitCode,
       resultSummary: result.summary,
-      latestNote: result.summary.slice(0, 240),
-      error: status === "failed" ? (stderrBuffer.trim() || result.summary) : null,
+      latestNote: result.outputFormatSatisfied
+        ? result.summary.slice(0, 240)
+        : `Unstructured worker output: ${result.validationIssues.join(" ")}`.slice(0, 240),
+      error: status === "failed"
+        ? (stderrBuffer.trim() || result.summary)
+        : (!result.outputFormatSatisfied ? result.validationIssues.join(" ") : null),
     };
     await store.updateTask(latestTask);
     await store.appendEvent({
@@ -236,8 +254,8 @@ export async function runWorkerInBackground(options: WorkerRunOptions): Promise<
           : status === "cancelled"
             ? "task.cancelled"
             : "task.failed",
-      message: result.summary,
-      payload: { exitCode },
+      message: result.outputFormatSatisfied ? result.summary : `Worker finished with unstructured output. ${result.validationIssues.join(" ")}`,
+      payload: { exitCode, outputFormatSatisfied: result.outputFormatSatisfied, validationIssues: result.validationIssues },
     });
     await cleanupPromptFile(promptFile.dir);
     return latestTask;

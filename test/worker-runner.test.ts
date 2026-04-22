@@ -53,6 +53,8 @@ test("normalizeTaskResult extracts sections and changed files", () => {
   ]);
   assert.equal(result.notes, "Need runtime manager next.");
   assert.equal(result.summary, "Implemented storage layer.");
+  assert.equal(result.outputFormatSatisfied, true);
+  assert.deepEqual(result.validationIssues, []);
 });
 
 test("normalizeTaskResult omits no-files-changed sentinel", () => {
@@ -73,6 +75,8 @@ test("normalizeTaskResult omits no-files-changed sentinel", () => {
   );
 
   assert.deepEqual(result.filesChanged, []);
+  assert.equal(result.outputFormatSatisfied, true);
+  assert.deepEqual(result.validationIssues, []);
 });
 
 test("getPiInvocation respects explicit command override", () => {

@@ -108,6 +108,7 @@ export class BackgroundWorkerRuntime {
       error: null,
       latestNote: "Queued",
       resultSummary: null,
+      reportedAt: null,
     };
 
     await this.store.createTask(task);
@@ -143,6 +144,7 @@ export class BackgroundWorkerRuntime {
       latestNote: "Cancelled before launch",
       resultSummary: "Cancelled before launch",
       error: null,
+      reportedAt: task.reportedAt,
     };
     await this.store.updateTask(cancelled);
     await this.store.writeResult({
@@ -154,6 +156,8 @@ export class BackgroundWorkerRuntime {
       notes: "Task was cancelled before a worker process started.",
       rawOutput: "Cancelled before launch",
       finishedAt: at,
+      outputFormatSatisfied: false,
+      validationIssues: ["Task was cancelled before worker output was produced."],
     });
     await this.store.appendEvent({
       taskId: cancelled.id,
@@ -195,6 +199,7 @@ export class BackgroundWorkerRuntime {
         latestNote: "Worker was interrupted before runtime could reattach",
         resultSummary: task.resultSummary ?? "Worker was interrupted before runtime could reattach",
         error: task.error ?? "Worker was interrupted before runtime could reattach",
+        reportedAt: task.reportedAt,
       };
       await this.store.updateTask(reconciled);
       await this.store.writeResult({
@@ -206,6 +211,8 @@ export class BackgroundWorkerRuntime {
         notes: "Marked failed during runtime reconciliation because the in-memory worker handle no longer existed.",
         rawOutput: reconciled.error ?? "Worker was interrupted before runtime could reattach",
         finishedAt: reconciled.finishedAt ?? at,
+        outputFormatSatisfied: false,
+        validationIssues: ["Worker did not complete normally before runtime reconciliation."],
       });
       await this.store.appendEvent({
         taskId: task.id,

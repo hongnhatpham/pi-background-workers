@@ -24,6 +24,7 @@ function makeTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
     error: null,
     latestNote: "Queued",
     resultSummary: null,
+    reportedAt: null,
     ...overrides,
   };
 }

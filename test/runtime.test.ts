@@ -40,6 +40,7 @@ function makeTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
     error: null,
     latestNote: null,
     resultSummary: null,
+    reportedAt: null,
     ...overrides,
   };
 }

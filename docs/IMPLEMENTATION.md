@@ -323,7 +323,7 @@ Use the package on real work before adding more features.
 - [ ] Test multiple concurrent tasks
 - [ ] Test reload while workers are running
 - [ ] Test result inspection from a fresh session
-- [ ] Record observed rough edges in this document or README
+- [x] Record observed rough edges in this document or README
 
 ### Acceptance criteria
 
@@ -333,13 +333,21 @@ Use the package on real work before adding more features.
 
 ---
 
+## Observed rough edges so far
+
+- Worker completion originally required manual polling; this is now addressed with automatic completion handoff messages.
+- Worker output quality can still be poor even on successful runs; result validation now marks malformed reports and surfaces validation issues, but the worker prompt likely needs further hardening during dogfooding.
+- Existing finished tasks with `reportedAt: null` may be reported once after reload, which is acceptable for now but not yet polished.
+
+---
+
 ## Phase 9 — Nice-to-have only after v0 works
 
 These should stay deferred unless v0 is already solid.
 
 - [ ] aliases like `/delegate` or `/btw`
 - [ ] better footer/status widgets
-- [ ] automatic notifications when tasks finish
+- [x] automatic notifications when tasks finish
 - [ ] richer progress extraction from worker streams
 - [ ] optional worker profiles
 - [ ] external observer API

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildCompletionMessage,
   buildStatusText,
   buildTaskDetailWidget,
   buildTaskListWidget,
@@ -30,6 +31,7 @@ function makeTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
     error: null,
     latestNote: "Inspecting Vite CSS output",
     resultSummary: null,
+    reportedAt: null,
     ...overrides,
   };
 }
@@ -44,6 +46,8 @@ function makeResult(overrides: Partial<TaskResult> = {}): TaskResult {
     notes: "Need to audit selector conflicts next.",
     rawOutput: "## Done\nRestarted Vite",
     finishedAt: "2026-04-22T12:05:00.000Z",
+    outputFormatSatisfied: true,
+    validationIssues: [],
     ...overrides,
   };
 }
@@ -95,4 +99,12 @@ test("buildTaskResultWidget renders normalized result sections", () => {
   assert.ok(lines.includes("- src/styles.css"));
   assert.ok(lines.includes("Notes"));
   assert.ok(lines.includes("Need to audit selector conflicts next."));
+});
+
+test("buildCompletionMessage includes summary and inspection commands", () => {
+  const completion = buildCompletionMessage(makeTask({ status: "succeeded" }), makeResult());
+  assert.match(completion.content, /Background task finished: Investigate stale CSS on homepage/);
+  assert.match(completion.content, /Summary: Found the stale CSS cause/);
+  assert.equal(completion.details.showCommand, "/bg-show task-1");
+  assert.equal(completion.details.resultsCommand, "/bg-results task-1");
 });
