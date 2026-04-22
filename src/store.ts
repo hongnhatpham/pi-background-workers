@@ -39,6 +39,21 @@ export interface StoreOptions {
   stateRoot?: string;
 }
 
+function normalizeTaskRecord(task: TaskRecord): TaskRecord {
+  return {
+    ...task,
+    reportedAt: task.reportedAt ?? null,
+  };
+}
+
+function normalizeTaskResult(result: TaskResult): TaskResult {
+  return {
+    ...result,
+    outputFormatSatisfied: result.outputFormatSatisfied ?? false,
+    validationIssues: Array.isArray(result.validationIssues) ? result.validationIssues : [],
+  };
+}
+
 export class TaskStore {
   readonly paths: StatePaths;
 
@@ -53,13 +68,15 @@ export class TaskStore {
 
   async listTasks(): Promise<TaskRecord[]> {
     await this.ensureStateRoot();
-    return readJsonFile<TaskRecord[]>(this.paths.tasksIndexPath, []);
+    const tasks = await readJsonFile<TaskRecord[]>(this.paths.tasksIndexPath, []);
+    return tasks.map(normalizeTaskRecord);
   }
 
   async getTask(taskId: string): Promise<TaskRecord | null> {
     const taskPaths = getTaskPaths(taskId, this.paths.stateRoot);
     if (await pathExists(taskPaths.metaPath)) {
-      return readJsonFile<TaskRecord | null>(taskPaths.metaPath, null);
+      const task = await readJsonFile<TaskRecord | null>(taskPaths.metaPath, null);
+      return task ? normalizeTaskRecord(task) : null;
     }
 
     const tasks = await this.listTasks();
@@ -68,12 +85,13 @@ export class TaskStore {
 
   async createTask(task: TaskRecord): Promise<void> {
     await this.ensureStateRoot();
+    const normalizedTask = normalizeTaskRecord(task);
     const tasks = await this.listTasks();
-    const filtered = tasks.filter((entry) => entry.id !== task.id);
-    filtered.push(task);
+    const filtered = tasks.filter((entry) => entry.id !== normalizedTask.id);
+    filtered.push(normalizedTask);
     filtered.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     await writeJsonFile(this.paths.tasksIndexPath, filtered);
-    await writeJsonFile(getTaskPaths(task.id, this.paths.stateRoot).metaPath, task);
+    await writeJsonFile(getTaskPaths(normalizedTask.id, this.paths.stateRoot).metaPath, normalizedTask);
   }
 
   async updateTask(task: TaskRecord): Promise<void> {
@@ -87,11 +105,13 @@ export class TaskStore {
 
   async writeResult(result: TaskResult): Promise<void> {
     await this.ensureStateRoot();
-    await writeJsonFile(getTaskPaths(result.taskId, this.paths.stateRoot).resultPath, result);
+    const normalizedResult = normalizeTaskResult(result);
+    await writeJsonFile(getTaskPaths(normalizedResult.taskId, this.paths.stateRoot).resultPath, normalizedResult);
   }
 
   async getResult(taskId: string): Promise<TaskResult | null> {
-    return readJsonFile<TaskResult | null>(getTaskPaths(taskId, this.paths.stateRoot).resultPath, null);
+    const result = await readJsonFile<TaskResult | null>(getTaskPaths(taskId, this.paths.stateRoot).resultPath, null);
+    return result ? normalizeTaskResult(result) : null;
   }
 
   async appendWorkerStdoutEvent(taskId: string, event: unknown): Promise<void> {
