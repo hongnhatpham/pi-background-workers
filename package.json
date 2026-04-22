@@ -10,9 +10,14 @@
     "check": "npm run typecheck && npm test"
   },
   "devDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
     "@types/node": "^24.5.2",
     "tsx": "^4.20.6",
     "typescript": "^5.9.2"
   },
-  "pi": {}
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  }
 }

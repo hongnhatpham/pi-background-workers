@@ -234,14 +234,14 @@ Expose background work controls to the user.
 
 ### Tasks
 
-- [ ] Add `src/index.ts`
-- [ ] Register `/bg`
-- [ ] Register `/bg-list`
-- [ ] Register `/bg-show`
-- [ ] Register `/bg-cancel`
-- [ ] Register `/bg-results`
-- [ ] Add compact human-readable rendering for each command
-- [ ] Add footer/status summary if cheap and stable
+- [x] Add `src/index.ts`
+- [x] Register `/bg`
+- [x] Register `/bg-list`
+- [x] Register `/bg-show`
+- [x] Register `/bg-cancel`
+- [x] Register `/bg-results`
+- [x] Add compact human-readable rendering for each command
+- [x] Add footer/status summary if cheap and stable
 
 ### Command expectations
 
