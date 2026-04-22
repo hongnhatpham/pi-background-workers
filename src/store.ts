@@ -47,10 +47,15 @@ function normalizeTaskRecord(task: TaskRecord): TaskRecord {
 }
 
 function normalizeTaskResult(result: TaskResult): TaskResult {
+  const outputFormatSatisfied = result.outputFormatSatisfied ?? false;
+  const validationIssues = Array.isArray(result.validationIssues) ? result.validationIssues : [];
   return {
     ...result,
-    outputFormatSatisfied: result.outputFormatSatisfied ?? false,
-    validationIssues: Array.isArray(result.validationIssues) ? result.validationIssues : [],
+    outputFormatSatisfied,
+    validationIssues:
+      !outputFormatSatisfied && validationIssues.length === 0
+        ? ["Legacy task result is missing structured validation metadata."]
+        : validationIssues,
   };
 }
 

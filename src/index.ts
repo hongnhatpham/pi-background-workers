@@ -199,17 +199,36 @@ export interface CompletionMessageDetails {
   resultsCommand: string;
 }
 
+export function summarizeCompletion(result: TaskResult): string {
+  if (result.outputFormatSatisfied) return result.summary;
+  if (result.done) return result.done;
+  const lines = result.rawOutput
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/^#+\s*(done|files changed|notes)\b/i.test(line))
+    .filter((line) => !/^use \/bg-results\b/i.test(line))
+    .filter((line) => !/^validation issues:/i.test(line));
+  const fileLikeLines = lines.filter((line) => /[/.]/.test(line) && !/\s/.test(line));
+  if (lines.length >= 6 && fileLikeLines.length >= Math.ceil(lines.length * 0.6)) {
+    return "Worker finished but returned an unstructured file listing instead of a usable summary.";
+  }
+  const preview = lines.slice(0, 4).join("; ");
+  return preview || result.summary;
+}
+
 export function buildCompletionMessage(task: TaskRecord, result: TaskResult): { content: string; details: CompletionMessageDetails } {
-  const qualityNote = result.outputFormatSatisfied
-    ? ""
-    : `\nValidation issues: ${result.validationIssues.join(" ")}`;
+  const summary = summarizeCompletion(result);
+  const qualityNote = !result.outputFormatSatisfied && result.validationIssues.length > 0
+    ? `\nValidation issues: ${result.validationIssues.join(" ")}`
+    : "";
   return {
-    content: `Background task finished: ${task.title}\nSummary: ${result.summary}${qualityNote}\nUse /bg-results ${task.id} for the full normalized result.`,
+    content: `Background task finished: ${task.title}\nSummary: ${summary}${qualityNote}\nUse /bg-results ${task.id} for the full normalized result.`,
     details: {
       taskId: task.id,
       title: task.title,
       status: result.status,
-      summary: result.summary,
+      summary,
       outputFormatSatisfied: result.outputFormatSatisfied,
       validationIssues: result.validationIssues,
       showCommand: `/bg-show ${task.id}`,

@@ -8,6 +8,7 @@ import {
   buildTaskListWidget,
   buildTaskResultWidget,
   formatTaskLine,
+  summarizeCompletion,
 } from "../src/index.js";
 import type { TaskRecord, TaskResult } from "../src/types.js";
 
@@ -107,4 +108,21 @@ test("buildCompletionMessage includes summary and inspection commands", () => {
   assert.match(completion.content, /Summary: Found the stale CSS cause/);
   assert.equal(completion.details.showCommand, "/bg-show task-1");
   assert.equal(completion.details.resultsCommand, "/bg-results task-1");
+});
+
+test("summarizeCompletion collapses unstructured file listings", () => {
+  const summary = summarizeCompletion(makeResult({
+    outputFormatSatisfied: false,
+    validationIssues: ["Missing ## Done section content."],
+    done: "",
+    rawOutput: [
+      "docs/spec.md",
+      "docs/implementation-plan.md",
+      "README.md",
+      "shell/shell.qml",
+      "shell/services/AudioService.qml",
+      "scripts/update_state.py",
+    ].join("\n"),
+  }));
+  assert.equal(summary, "Worker finished but returned an unstructured file listing instead of a usable summary.");
 });
