@@ -20,6 +20,7 @@ This repo is now the clean-room home for a new design:
 ## Current contents
 
 - `docs/ARCHITECTURE.md` — design for the clean-room v0
+- `docs/IMPLEMENTATION.md` — ordered implementation checklist for v0
 
 ## Planned v0
 
