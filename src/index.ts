@@ -213,7 +213,7 @@ export function summarizeCompletion(result: TaskResult): string {
     .filter((line) => !/^use \/bg-results\b/i.test(line))
     .filter((line) => !/^validation issues:/i.test(line));
   const fileLikeLines = lines.filter((line) => /[/.]/.test(line) && !/\s/.test(line));
-  if (lines.length >= 6 && fileLikeLines.length >= Math.ceil(lines.length * 0.6)) {
+  if ((lines.length >= 3 && fileLikeLines.length === lines.length) || (lines.length >= 6 && fileLikeLines.length >= Math.ceil(lines.length * 0.6))) {
     return "Worker finished but returned an unstructured file listing instead of a usable summary.";
   }
   const preview = lines.slice(0, 4).join("; ");
@@ -244,6 +244,7 @@ export function buildCompletionMessage(task: TaskRecord, result: TaskResult): { 
 export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
   let runtime: BackgroundWorkerRuntime | null = null;
   let statusTimer: NodeJS.Timeout | null = null;
+  let autoReportCutoffAt: string | null = null;
 
   const ensureRuntime = async (): Promise<BackgroundWorkerRuntime> => {
     if (!runtime) {
@@ -271,6 +272,13 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
     const groups = await activeRuntime.listTasks(20);
     for (const task of groups.recent) {
       if (task.reportedAt) continue;
+      if (autoReportCutoffAt && task.finishedAt && task.finishedAt < autoReportCutoffAt) {
+        await activeRuntime.store.updateTask({
+          ...task,
+          reportedAt: activeRuntime.now(),
+        });
+        continue;
+      }
       const result = await activeRuntime.getTaskResult(task.id);
       if (!result) continue;
       const completion = buildCompletionMessage(task, result);
@@ -291,6 +299,7 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
   };
 
   pi.on("session_start", async (_event, ctx) => {
+    autoReportCutoffAt = new Date().toISOString();
     await ensureRuntime();
     await refreshStatus(ctx);
     await deliverFinishedTaskReports();
@@ -307,6 +316,7 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
     clearStatusTimer();
     ctx.ui.setStatus(STATUS_KEY, undefined);
     ctx.ui.setWidget(WIDGET_KEY, undefined);
+    autoReportCutoffAt = null;
     if (runtime) {
       await runtime.shutdown();
       runtime = null;

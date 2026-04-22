@@ -140,3 +140,17 @@ test("summarizeCompletion collapses unstructured file listings", () => {
   }));
   assert.equal(summary, "Worker finished but returned an unstructured file listing instead of a usable summary.");
 });
+
+test("summarizeCompletion collapses short pure file listings", () => {
+  const summary = summarizeCompletion(makeResult({
+    outputFormatSatisfied: false,
+    validationIssues: ["Legacy task result is missing structured validation metadata."],
+    done: "",
+    rawOutput: [
+      "/home/hongnhatpham/.nvm/.git",
+      "/home/hongnhatpham/.nvm/package.json",
+      "/home/hongnhatpham/package.json",
+    ].join("\n"),
+  }));
+  assert.equal(summary, "Worker finished but returned an unstructured file listing instead of a usable summary.");
+});
