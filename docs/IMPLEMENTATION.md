@@ -285,19 +285,19 @@ Let the main assistant delegate work programmatically.
 
 ### Tasks
 
-- [ ] Register `delegate_task`
-- [ ] Define input schema:
-  - [ ] `task`
-  - [ ] optional `title`
-  - [ ] optional `cwd`
-  - [ ] optional `model`
-  - [ ] optional `timeoutMinutes`
-  - [ ] optional `tools`
-  - [ ] optional `priority`
-  - [ ] optional `waitForResult` (likely disabled or ignored in v0)
-- [ ] Tool should create and launch a background task
-- [ ] Tool should return quickly by default
-- [ ] Tool result should include task id + inspection hints
+- [x] Register `delegate_task`
+- [x] Define input schema:
+  - [x] `task`
+  - [x] optional `title`
+  - [x] optional `cwd`
+  - [x] optional `model`
+  - [x] optional `timeoutMinutes`
+  - [x] optional `tools`
+  - [x] optional `priority`
+  - [x] optional `waitForResult` (likely disabled or ignored in v0)
+- [x] Tool should create and launch a background task
+- [x] Tool should return quickly by default
+- [x] Tool result should include task id + inspection hints
 - [ ] Add tool rendering if useful
 
 ### Acceptance criteria

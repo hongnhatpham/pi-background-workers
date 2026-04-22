@@ -1,7 +1,8 @@
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
+import { defineTool, type AgentToolResult, type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
 
-import { BackgroundWorkerRuntime, type TaskList } from "./runtime.js";
-import type { TaskRecord, TaskResult } from "./types.js";
+import { BackgroundWorkerRuntime, type LaunchTaskInput, type TaskList } from "./runtime.js";
+import type { TaskPriority, TaskRecord, TaskResult } from "./types.js";
 
 const STATUS_KEY = "pi-background-workers";
 const WIDGET_KEY = "pi-background-workers";
@@ -127,6 +128,61 @@ export function buildTaskResultWidget(task: TaskRecord, result: TaskResult): str
 function parseRequiredId(args: string): string | null {
   const id = args.trim();
   return id.length > 0 ? id : null;
+}
+
+export interface DelegateTaskParams {
+  task: string;
+  title?: string;
+  cwd?: string;
+  model?: string;
+  timeoutMinutes?: number;
+  tools?: string[];
+  priority?: TaskPriority;
+  waitForResult?: boolean;
+}
+
+export function toLaunchTaskInput(params: DelegateTaskParams, cwd: string): LaunchTaskInput {
+  return {
+    task: params.task,
+    title: params.title?.trim() || params.task.trim(),
+    cwd: params.cwd?.trim() || cwd,
+    model: params.model?.trim() || null,
+    tools: params.tools && params.tools.length > 0 ? params.tools : null,
+    priority: params.priority ?? "normal",
+    timeoutMinutes: typeof params.timeoutMinutes === "number" ? params.timeoutMinutes : null,
+  };
+}
+
+export function buildDelegateTaskText(task: TaskRecord, waitForResult: boolean): string {
+  const waitNote = waitForResult
+    ? "waitForResult is not supported in v0; launched in background instead."
+    : "Launched in background.";
+  return [
+    `Created background task ${task.id}.`,
+    `Title: ${task.title}`,
+    `Status: ${task.status}`,
+    `CWD: ${task.cwd}`,
+    waitNote,
+    `Use /bg-show ${task.id} or /bg-results ${task.id} to inspect it.`,
+  ].join("\n");
+}
+
+export function buildDelegateTaskResult(task: TaskRecord, waitForResult: boolean): AgentToolResult<Record<string, unknown>> {
+  return {
+    content: [{ type: "text", text: buildDelegateTaskText(task, waitForResult) }],
+    details: {
+      taskId: task.id,
+      title: task.title,
+      status: task.status,
+      cwd: task.cwd,
+      waitForResultIgnored: waitForResult,
+      inspectCommands: {
+        show: `/bg-show ${task.id}`,
+        results: `/bg-results ${task.id}`,
+        cancel: `/bg-cancel ${task.id}`,
+      },
+    },
+  };
 }
 
 export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
@@ -287,4 +343,38 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
       await refreshStatus(ctx);
     },
   });
+
+  const delegateTaskTool = defineTool({
+    name: "delegate_task",
+    label: "Delegate Task",
+    description: "Launch a bounded background Pi worker so the main conversation can stay available.",
+    promptSnippet: "delegate_task(task, title?, cwd?, model?, timeoutMinutes?, tools?, priority?, waitForResult?) — launch a background worker and return task tracking info.",
+    promptGuidelines: [
+      "Use delegate_task for long-running, parallelizable, or noisy work that does not need to monopolize the current turn.",
+      "Prefer delegate_task over blocking yourself on long implementation or audit runs when the user may want to keep chatting.",
+      "delegate_task is background-first; in v0 waitForResult is ignored and the task is still launched asynchronously.",
+    ],
+    parameters: Type.Object({
+      task: Type.String({ description: "The worker objective." }),
+      title: Type.Optional(Type.String({ description: "Short task title for displays." })),
+      cwd: Type.Optional(Type.String({ description: "Optional working directory override." })),
+      model: Type.Optional(Type.String({ description: "Optional model override for the worker." })),
+      timeoutMinutes: Type.Optional(Type.Number({ description: "Optional timeout override in minutes." })),
+      tools: Type.Optional(Type.Array(Type.String({ description: "Tool name" }), { description: "Optional tool allow-list passed to Pi." })),
+      priority: Type.Optional(Type.Union([
+        Type.Literal("low"),
+        Type.Literal("normal"),
+        Type.Literal("high"),
+      ], { description: "Optional task priority." })),
+      waitForResult: Type.Optional(Type.Boolean({ description: "Ignored in v0; background launch still returns immediately." })),
+    }),
+    async execute(_toolCallId, params: DelegateTaskParams, _signal, _onUpdate, ctx: ExtensionContext) {
+      const activeRuntime = await ensureRuntime();
+      const task = await activeRuntime.launchTask(toLaunchTaskInput(params, ctx.cwd));
+      await refreshStatus(ctx);
+      return buildDelegateTaskResult(task, Boolean(params.waitForResult));
+    },
+  });
+
+  pi.registerTool(delegateTaskTool);
 }
