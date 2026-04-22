@@ -1,26 +1,8 @@
 {
-  "name": "pi-subagent-orchestrator-extension",
+  "name": "pi-background-workers",
   "private": true,
   "type": "module",
-  "description": "Observable subagent delegation and orchestration for Pi",
+  "description": "Background worker delegation for Pi",
   "keywords": ["pi-package"],
-  "scripts": {
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@mariozechner/pi-coding-agent": "*"
-  },
-  "devDependencies": {
-    "@types/node": "^24.5.2",
-    "typescript": "^5.9.2"
-  },
-  "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*",
-    "@mariozechner/pi-tui": "*"
-  },
-  "pi": {
-    "extensions": [
-      "./src/index.ts"
-    ]
-  }
+  "pi": {}
 }
