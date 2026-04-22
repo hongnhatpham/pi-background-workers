@@ -110,6 +110,20 @@ test("buildCompletionMessage includes summary and inspection commands", () => {
   assert.equal(completion.details.resultsCommand, "/bg-results task-1");
 });
 
+test("buildCompletionMessage suppresses output quality note for cancelled tasks", () => {
+  const completion = buildCompletionMessage(
+    makeTask({ status: "cancelled", title: "Dogfood test task" }),
+    makeResult({
+      status: "cancelled",
+      summary: "Cancelled before launch",
+      outputFormatSatisfied: false,
+      validationIssues: ["Task was cancelled before worker output was produced."],
+    }),
+  );
+  assert.match(completion.content, /Summary: Cancelled before launch/);
+  assert.doesNotMatch(completion.content, /Output quality note:/);
+});
+
 test("summarizeCompletion collapses unstructured file listings", () => {
   const summary = summarizeCompletion(makeResult({
     outputFormatSatisfied: false,

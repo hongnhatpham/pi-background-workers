@@ -201,6 +201,9 @@ export interface CompletionMessageDetails {
 
 export function summarizeCompletion(result: TaskResult): string {
   if (result.outputFormatSatisfied) return result.summary;
+  if (result.status === "cancelled" || result.status === "timed_out" || result.status === "failed") {
+    return result.summary;
+  }
   if (result.done) return result.done;
   const lines = result.rawOutput
     .split(/\r?\n/)
@@ -219,8 +222,9 @@ export function summarizeCompletion(result: TaskResult): string {
 
 export function buildCompletionMessage(task: TaskRecord, result: TaskResult): { content: string; details: CompletionMessageDetails } {
   const summary = summarizeCompletion(result);
-  const qualityNote = !result.outputFormatSatisfied && result.validationIssues.length > 0
-    ? `\nValidation issues: ${result.validationIssues.join(" ")}`
+  const primaryIssue = result.validationIssues[0] ?? "Worker output did not match the expected structured format.";
+  const qualityNote = result.status !== "cancelled" && !result.outputFormatSatisfied
+    ? `\nOutput quality note: ${primaryIssue}`
     : "";
   return {
     content: `Background task finished: ${task.title}\nSummary: ${summary}${qualityNote}\nUse /bg-results ${task.id} for the full normalized result.`,
