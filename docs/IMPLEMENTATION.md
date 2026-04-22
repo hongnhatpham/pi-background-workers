@@ -47,16 +47,16 @@ Create the minimum package structure needed to start implementing safely.
 
 ### Tasks
 
-- [ ] Add `tsconfig.json`
+- [x] Add `tsconfig.json`
 - [ ] Add `package-lock.json` via `npm install`
-- [ ] Add `src/` directory
-- [ ] Add `test/` directory
-- [ ] Expand `package.json` with scripts:
-  - [ ] `build` or `typecheck`
-  - [ ] `test`
-  - [ ] `check`
-- [ ] Add any minimal test dependencies
-- [ ] Update `README.md` to mention implementation plan once this file exists
+- [x] Add `src/` directory
+- [x] Add `test/` directory
+- [x] Expand `package.json` with scripts:
+  - [x] `build` or `typecheck`
+  - [x] `test`
+  - [x] `check`
+- [x] Add any minimal test dependencies
+- [x] Update `README.md` to mention implementation plan once this file exists
 
 ### Acceptance criteria
 
@@ -74,29 +74,29 @@ Define the data model before launching any workers.
 
 ### Tasks
 
-- [ ] Add `src/types.ts`
-- [ ] Define task status enum/type:
-  - [ ] `queued`
-  - [ ] `running`
-  - [ ] `succeeded`
-  - [ ] `failed`
-  - [ ] `cancelled`
-  - [ ] optional `cancelling`
-  - [ ] optional `timed_out`
-- [ ] Define task metadata type
-- [ ] Define normalized task result type
-- [ ] Define event record type
-- [ ] Define config/defaults type
-- [ ] Add `src/paths.ts`
-- [ ] Implement state root resolution:
-  - [ ] `~/.local/state/pi-background-workers/`
-- [ ] Define canonical file layout helpers for:
-  - [ ] `tasks.json`
-  - [ ] `events.jsonl`
-  - [ ] `tasks/<id>/meta.json`
-  - [ ] `tasks/<id>/stdout.jsonl`
-  - [ ] `tasks/<id>/stderr.log`
-  - [ ] `tasks/<id>/result.json`
+- [x] Add `src/types.ts`
+- [x] Define task status enum/type:
+  - [x] `queued`
+  - [x] `running`
+  - [x] `succeeded`
+  - [x] `failed`
+  - [x] `cancelled`
+  - [x] optional `cancelling`
+  - [x] optional `timed_out`
+- [x] Define task metadata type
+- [x] Define normalized task result type
+- [x] Define event record type
+- [x] Define config/defaults type
+- [x] Add `src/paths.ts`
+- [x] Implement state root resolution:
+  - [x] `~/.local/state/pi-background-workers/`
+- [x] Define canonical file layout helpers for:
+  - [x] `tasks.json`
+  - [x] `events.jsonl`
+  - [x] `tasks/<id>/meta.json`
+  - [x] `tasks/<id>/stdout.jsonl`
+  - [x] `tasks/<id>/stderr.log`
+  - [x] `tasks/<id>/result.json`
 
 ### Acceptance criteria
 
@@ -114,20 +114,20 @@ Create a small storage API that owns all reads and writes.
 
 ### Tasks
 
-- [ ] Add `src/store.ts`
-- [ ] Implement:
-  - [ ] `createTask()`
-  - [ ] `updateTask()`
-  - [ ] `appendEvent()`
-  - [ ] `listTasks()`
-  - [ ] `getTask()`
-  - [ ] `writeResult()`
-  - [ ] `appendWorkerStdoutEvent()`
-  - [ ] `appendWorkerStderr()`
-- [ ] Keep `tasks.json` in sync with task-local `meta.json`
-- [ ] Make writes resilient to missing directories
-- [ ] Ensure state can be reconstructed purely from disk
-- [ ] Add tests for storage behavior
+- [x] Add `src/store.ts`
+- [x] Implement:
+  - [x] `createTask()`
+  - [x] `updateTask()`
+  - [x] `appendEvent()`
+  - [x] `listTasks()`
+  - [x] `getTask()`
+  - [x] `writeResult()`
+  - [x] `appendWorkerStdoutEvent()`
+  - [x] `appendWorkerStderr()`
+- [x] Keep `tasks.json` in sync with task-local `meta.json`
+- [x] Make writes resilient to missing directories
+- [x] Ensure state can be reconstructed purely from disk
+- [x] Add tests for storage behavior
 
 ### Acceptance criteria
 
@@ -399,8 +399,8 @@ v0 is done when all of the following are true:
 
 Start with:
 
-- Phase 0 — Repo scaffolding
-- Phase 1 — Core types and storage layout
-- Phase 2 — Persistence layer
+- [x] Phase 0 — Repo scaffolding
+- [x] Phase 1 — Core types and storage layout
+- [x] Phase 2 — Persistence layer
 
 Those three phases create the foundation for everything else.

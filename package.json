@@ -4,5 +4,15 @@
   "type": "module",
   "description": "Background worker delegation for Pi",
   "keywords": ["pi-package"],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "check": "npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.2"
+  },
   "pi": {}
 }
