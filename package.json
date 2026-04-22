@@ -2,6 +2,8 @@
   "name": "pi-background-workers",
   "private": true,
   "type": "module",
+  "main": "./index.ts",
+  "exports": "./index.ts",
   "description": "Background worker delegation for Pi",
   "keywords": ["pi-package"],
   "scripts": {
@@ -17,7 +19,7 @@
   },
   "pi": {
     "extensions": [
-      "./src/index.ts"
+      "./index.ts"
     ]
   }
 }
