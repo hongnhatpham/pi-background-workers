@@ -187,7 +187,7 @@ Run a Pi subprocess in the background and supervise its lifecycle.
 - [x] Normalize final result into `result.json`
 - [x] Add timeout handling
 - [x] Add cancellation handling
-- [ ] Add concurrency cap support
+- [x] Add concurrency cap support
 - [x] Add tests for runner helpers where feasible
 
 ### Acceptance criteria
@@ -206,17 +206,17 @@ Coordinate multiple tasks from the extension runtime.
 
 ### Tasks
 
-- [ ] Add `src/runtime.ts`
-- [ ] Track in-memory running processes
-- [ ] Rebuild state from disk on `session_start`
-- [ ] Clean up timers/subscriptions on `session_shutdown`
-- [ ] Reconcile tasks whose process exited while Pi was reloading
-- [ ] Implement basic queueing when concurrency limit is reached
-- [ ] Provide helpers for:
-  - [ ] launch task
-  - [ ] cancel task
-  - [ ] inspect task
-  - [ ] list active/recent tasks
+- [x] Add `src/runtime.ts`
+- [x] Track in-memory running processes
+- [x] Rebuild state from disk on `session_start`
+- [x] Clean up timers/subscriptions on `session_shutdown`
+- [x] Reconcile tasks whose process exited while Pi was reloading
+- [x] Implement basic queueing when concurrency limit is reached
+- [x] Provide helpers for:
+  - [x] launch task
+  - [x] cancel task
+  - [x] inspect task
+  - [x] list active/recent tasks
 
 ### Acceptance criteria
 
