@@ -49,6 +49,17 @@ function isRunningLike(status: TaskStatus): boolean {
   return status === "running" || status === "cancelling";
 }
 
+export function isProcessAlive(pid: number | null): boolean {
+  if (!pid || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "EPERM";
+  }
+}
+
 function buildTaskId(now: string): string {
   const stamp = now.replace(/[:.]/g, "-");
   const suffix = crypto.randomBytes(4).toString("hex");
@@ -189,6 +200,7 @@ export class BackgroundWorkerRuntime {
     for (const task of tasks) {
       if (!isRunningLike(task.status)) continue;
       if (this.runningHandles.has(task.id)) continue;
+      if (isProcessAlive(task.pid)) continue;
 
       const at = this.now();
       const reconciled: TaskRecord = {

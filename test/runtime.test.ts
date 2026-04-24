@@ -48,7 +48,7 @@ function makeTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
 test("initialize reconciles stale running tasks to failed", async () => {
   const stateRoot = await makeTempRoot();
   const store = new TaskStore({ stateRoot });
-  await store.createTask(makeTask({ status: "running", startedAt: "2026-04-22T12:01:00.000Z", pid: 999 }));
+  await store.createTask(makeTask({ status: "running", startedAt: "2026-04-22T12:01:00.000Z", pid: 999999999 }));
 
   const runtime = new BackgroundWorkerRuntime({ store, now: () => "2026-04-22T12:05:00.000Z" });
   await runtime.initialize();
@@ -59,6 +59,22 @@ test("initialize reconciles stale running tasks to failed", async () => {
 
   const result = await runtime.getTaskResult("task-existing");
   assert.equal(result?.status, "failed");
+});
+
+test("initialize preserves running tasks whose pid is still alive", async () => {
+  const stateRoot = await makeTempRoot();
+  const store = new TaskStore({ stateRoot });
+  await store.createTask(makeTask({ status: "running", startedAt: "2026-04-22T12:01:00.000Z", pid: process.pid }));
+
+  const runtime = new BackgroundWorkerRuntime({ store, now: () => "2026-04-22T12:05:00.000Z" });
+  await runtime.initialize();
+
+  const task = await runtime.getTask("task-existing");
+  assert.equal(task?.status, "running");
+  assert.equal(task?.pid, process.pid);
+
+  const result = await runtime.getTaskResult("task-existing");
+  assert.equal(result, null);
 });
 
 test("launchTask creates queued task and stores it", async () => {
