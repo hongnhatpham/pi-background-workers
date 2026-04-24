@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   buildCompletionMessage,
+  buildLaunchMessage,
   buildStatusText,
   buildTaskDetailWidget,
   buildTaskListWidget,
@@ -100,6 +101,15 @@ test("buildTaskResultWidget renders normalized result sections", () => {
   assert.ok(lines.includes("- src/styles.css"));
   assert.ok(lines.includes("Notes"));
   assert.ok(lines.includes("Need to audit selector conflicts next."));
+});
+
+test("buildLaunchMessage makes delegated work visible and inspectable", () => {
+  const launch = buildLaunchMessage(makeTask(), true);
+  assert.match(launch.content, /Background task started: Investigate stale CSS on homepage/);
+  assert.match(launch.content, /waitForResult is ignored/);
+  assert.equal(launch.details.showCommand, "/bg-show task-1");
+  assert.equal(launch.details.resultsCommand, "/bg-results task-1");
+  assert.equal(launch.details.cancelCommand, "/bg-cancel task-1");
 });
 
 test("buildCompletionMessage includes summary and inspection commands", () => {

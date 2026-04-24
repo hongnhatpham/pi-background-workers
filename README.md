@@ -15,6 +15,7 @@ This repo is now the clean-room home for a new design:
 - disposable background workers
 - quick return to the main conversation
 - persistent task visibility
+- visible launch/completion announcements so delegated work is never silent
 - small Pi-native command and tool surface
 
 ## Current contents
@@ -30,6 +31,7 @@ This repo is now the clean-room home for a new design:
 - task snapshot + event log persistence
 - generic worker prompt
 - reload-safe state reconstruction
+- launch visibility for both `/bg` and `delegate_task`: status text, task widget, UI notification, and displayed launch message
 
 ## Repo reset note
 

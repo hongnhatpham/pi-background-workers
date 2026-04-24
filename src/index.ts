@@ -8,6 +8,7 @@ const STATUS_KEY = "pi-background-workers";
 const WIDGET_KEY = "pi-background-workers";
 const STATUS_POLL_MS = 2_000;
 const COMPLETION_MESSAGE_TYPE = "pi-background-workers-completion";
+const LAUNCH_MESSAGE_TYPE = "pi-background-workers-launch";
 
 function truncate(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text;
@@ -188,6 +189,34 @@ export function buildDelegateTaskResult(task: TaskRecord, waitForResult: boolean
   };
 }
 
+export interface LaunchMessageDetails {
+  taskId: string;
+  title: string;
+  status: TaskRecord["status"];
+  cwd: string;
+  waitForResultIgnored: boolean;
+  showCommand: string;
+  resultsCommand: string;
+  cancelCommand: string;
+}
+
+export function buildLaunchMessage(task: TaskRecord, waitForResult: boolean): { content: string; details: LaunchMessageDetails } {
+  const waitNote = waitForResult ? "\nNote: waitForResult is ignored in v0; this is running in the background." : "";
+  return {
+    content: `Background task started: ${task.title}\nID: ${task.id}\nCWD: ${task.cwd}${waitNote}\nUse /bg-show ${task.id}, /bg-results ${task.id}, or /bg-cancel ${task.id}.`,
+    details: {
+      taskId: task.id,
+      title: task.title,
+      status: task.status,
+      cwd: task.cwd,
+      waitForResultIgnored: waitForResult,
+      showCommand: `/bg-show ${task.id}`,
+      resultsCommand: `/bg-results ${task.id}`,
+      cancelCommand: `/bg-cancel ${task.id}`,
+    },
+  };
+}
+
 export interface CompletionMessageDetails {
   taskId: string;
   title: string;
@@ -267,6 +296,20 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
     }
   };
 
+  const announceTaskLaunch = async (task: TaskRecord, ctx: ExtensionContext, waitForResult = false): Promise<void> => {
+    const launch = buildLaunchMessage(task, waitForResult);
+    if (ctx.hasUI) {
+      ctx.ui.setWidget(WIDGET_KEY, buildTaskDetailWidget(task));
+      ctx.ui.notify(`Background task started: ${truncate(task.title, 72)}`, "info");
+    }
+    pi.sendMessage({
+      customType: LAUNCH_MESSAGE_TYPE,
+      content: launch.content,
+      display: true,
+      details: launch.details,
+    });
+  };
+
   const deliverFinishedTaskReports = async (): Promise<void> => {
     const activeRuntime = await ensureRuntime();
     const groups = await activeRuntime.listTasks(20);
@@ -339,8 +382,7 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
         cwd: ctx.cwd,
       });
 
-      ctx.ui.setWidget(WIDGET_KEY, buildTaskDetailWidget(task));
-      ctx.ui.notify(`Background task ${task.id} is ${task.status}.`, "info");
+      await announceTaskLaunch(task, ctx);
       await refreshStatus(ctx);
     },
   });
@@ -462,9 +504,11 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params: DelegateTaskParams, _signal, _onUpdate, ctx: ExtensionContext) {
       const activeRuntime = await ensureRuntime();
+      const waitForResult = Boolean(params.waitForResult);
       const task = await activeRuntime.launchTask(toLaunchTaskInput(params, ctx.cwd));
+      await announceTaskLaunch(task, ctx, waitForResult);
       await refreshStatus(ctx);
-      return buildDelegateTaskResult(task, Boolean(params.waitForResult));
+      return buildDelegateTaskResult(task, waitForResult);
     },
   });
 
