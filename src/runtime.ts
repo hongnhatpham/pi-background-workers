@@ -28,6 +28,8 @@ export interface LaunchTaskInput {
   acceptanceCriteria?: string | null;
   expectedArtifacts?: string[] | null;
   riskLevel?: string | null;
+  ownerSessionId?: string | null;
+  ownerSessionFile?: string | null;
 }
 
 export interface TaskList {
@@ -128,6 +130,9 @@ export class BackgroundWorkerRuntime {
       latestNote: "Queued",
       resultSummary: null,
       reportedAt: null,
+      ownerSessionId: input.ownerSessionId ?? null,
+      ownerSessionFile: input.ownerSessionFile ?? null,
+      reportDeliveryLog: null,
       swarmId: input.swarmId ?? null,
       swarmRole: input.swarmRole ?? input.roleHint ?? null,
       taskType: input.taskType ?? null,
@@ -191,6 +196,9 @@ export class BackgroundWorkerRuntime {
       resultSummary: "Cancelled before launch",
       error: null,
       reportedAt: task.reportedAt,
+      ownerSessionId: task.ownerSessionId ?? null,
+      ownerSessionFile: task.ownerSessionFile ?? null,
+      reportDeliveryLog: task.reportDeliveryLog ?? null,
     };
     await this.store.updateTask(cancelled);
     await this.store.writeResult({
@@ -265,6 +273,9 @@ export class BackgroundWorkerRuntime {
         resultSummary: task.resultSummary ?? "Worker was interrupted before runtime could reattach",
         error: task.error ?? "Worker was interrupted before runtime could reattach",
         reportedAt: task.reportedAt,
+        ownerSessionId: task.ownerSessionId ?? null,
+        ownerSessionFile: task.ownerSessionFile ?? null,
+        reportDeliveryLog: task.reportDeliveryLog ?? null,
       };
       await this.store.updateTask(reconciled);
       await this.store.writeResult({

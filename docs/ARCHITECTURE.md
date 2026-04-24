@@ -206,6 +206,8 @@ Show grouped task state for a swarm: counts, roles, latest notes, and compact re
 
 When all known tasks in a swarm become terminal, automatic completion delivery should send one grouped swarm completion message instead of one message per worker. The message should include status counts, concise per-role summaries, `/bg-show-swarm <swarm-id>` for raw executor inspection, and ARIA review guidance: `/aria swarm review <swarm-id> --write-inbox`. It must not imply adoption; adoption remains an explicit `/aria adopt-swarm accept|defer|dismiss ...` decision.
 
+Automatic completion delivery is session-owned. Tasks launched from a Pi session are stamped with `ownerSessionId` and `ownerSessionFile` from `ctx.sessionManager`. The shared task store remains inspectable from any Pi session, but only the owner session may auto-deliver and mark those tasks `reportedAt`. Legacy tasks without an owner remain reportable everywhere for backward compatibility.
+
 ### `/bg-cancel-swarm <swarm-id>`
 
 Cancel all queued/running tasks in a swarm while preserving partial finished results. This is executor-owned cancellation; higher-level ARIA swarm commands should route live cancellation here.

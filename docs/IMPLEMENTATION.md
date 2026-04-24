@@ -364,7 +364,8 @@ Use the package on real work before adding more features.
 - The main assistant previously underused delegation; the extension now injects stronger per-turn swarm guidance for foreground sessions, explicit launch-shape suggestions, and exposes `delegate_swarm` plus `/swarm`/`/delegate` aliases for cheap fan-out.
 - Background worker child sessions explicitly do not receive the foreground swarm policy injection, preventing recursive delegation pressure inside disposable workers.
 - Swarm-tagged workers now report one grouped completion after all known tasks in the swarm are terminal. The grouped message points to `/bg-show-swarm` and `/aria swarm review <swarm-id> --write-inbox`, and explicitly preserves the boundary that nothing is adopted until `/aria adopt-swarm ...` is run.
-- Existing finished tasks with `reportedAt: null` may be reported once after reload, which is acceptable for now but not yet polished.
+- Worker launches now stamp `ownerSessionId` and `ownerSessionFile` from `ctx.sessionManager`, and automatic completion delivery only consumes reports in the owner session. Other Pi sessions can inspect shared worker state manually without marking it `reportedAt`.
+- Existing finished legacy tasks with no owner session may still be reported once after reload, which is acceptable for backward compatibility but not yet polished.
 
 ---
 
@@ -376,6 +377,7 @@ These should stay deferred unless v0 is already solid.
 - [ ] better footer/status widgets
 - [x] automatic notifications when tasks finish
 - [x] grouped completion notifications for worker swarms
+- [x] owner-session completion delivery for multi-session Pi use
 - [ ] richer progress extraction from worker streams
 - [ ] optional worker profiles
 - [ ] external observer API

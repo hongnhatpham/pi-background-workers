@@ -42,6 +42,13 @@ export interface TaskRecord {
   latestNote: string | null;
   resultSummary: string | null;
   reportedAt: string | null;
+  ownerSessionId?: string | null;
+  ownerSessionFile?: string | null;
+  reportDeliveryLog?: Array<{
+    sessionId: string | null;
+    deliveredAt: string;
+    delivery: "idle-follow-up" | "active-steering" | "mark-only";
+  }> | null;
   swarmId: string | null;
   swarmRole: string | null;
   taskType?: string | null;

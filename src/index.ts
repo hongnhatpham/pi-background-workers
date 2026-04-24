@@ -174,6 +174,11 @@ function formatStatusCounts(tasks: TaskRecord[]): string {
   return Object.entries(counts).map(([status, count]) => `${status}=${count}`).join(" · ");
 }
 
+function canReportTaskInSession(task: TaskRecord, sessionId: string | null): boolean {
+  if (!task.ownerSessionId) return true;
+  return Boolean(sessionId && task.ownerSessionId === sessionId);
+}
+
 export function buildSwarmDetailWidget(swarmId: string, tasks: TaskRecord[], results: Array<TaskResult | null> = []): string[] {
   const lines = ["pi-background-workers", "", `Swarm: ${swarmId}`, `Tasks: ${tasks.length}`];
   const counts = statusCounts(tasks);
@@ -239,6 +244,11 @@ export interface PreparedSwarmLaunch {
   tasks: LaunchTaskInput[];
 }
 
+interface CompletionOwner {
+  ownerSessionId: string | null;
+  ownerSessionFile: string | null;
+}
+
 export function createSwarmId(now = new Date()): string {
   const stamp = now.toISOString().replace(/[:.]/g, "-");
   return `swarm-${stamp}-${crypto.randomBytes(3).toString("hex")}`;
@@ -246,6 +256,13 @@ export function createSwarmId(now = new Date()): string {
 
 function nonEmptyTools(tools?: string[]): string[] | null {
   return tools && tools.length > 0 ? tools : null;
+}
+
+function completionOwnerFromContext(ctx: ExtensionContext): CompletionOwner {
+  return {
+    ownerSessionId: ctx.sessionManager.getSessionId() ?? null,
+    ownerSessionFile: ctx.sessionManager.getSessionFile() ?? null,
+  };
 }
 
 export function toLaunchTaskInput(params: DelegateTaskParams, cwd: string, swarmId?: string | null): LaunchTaskInput {
@@ -484,9 +501,9 @@ export type CompletionReportPlan =
   | { kind: "swarm"; swarmId: string; tasks: TaskRecord[] }
   | { kind: "mark-only"; reason: "pre_cutoff" | "partially_reported_swarm"; tasks: TaskRecord[] };
 
-export function planCompletionReports(tasks: TaskRecord[], autoReportCutoffAt: string | null): CompletionReportPlan[] {
+export function planCompletionReports(tasks: TaskRecord[], autoReportCutoffAt: string | null, ownerSessionId: string | null = null): CompletionReportPlan[] {
   const terminalUnreported = tasks
-    .filter((task) => isTerminalStatus(task.status) && !task.reportedAt)
+    .filter((task) => isTerminalStatus(task.status) && !task.reportedAt && canReportTaskInSession(task, ownerSessionId))
     .sort((a, b) => (b.finishedAt ?? b.updatedAt).localeCompare(a.finishedAt ?? a.updatedAt));
   const plans: CompletionReportPlan[] = [];
   const seenSwarms = new Set<string>();
@@ -496,7 +513,7 @@ export function planCompletionReports(tasks: TaskRecord[], autoReportCutoffAt: s
     if (task.swarmId) {
       if (seenSwarms.has(task.swarmId)) continue;
       const swarmTasks = tasks
-        .filter((candidate) => candidate.swarmId === task.swarmId)
+        .filter((candidate) => candidate.swarmId === task.swarmId && canReportTaskInSession(candidate, ownerSessionId))
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
       if (swarmTasks.length > 1) {
         seenSwarms.add(task.swarmId);
@@ -823,8 +840,9 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
   const launchSwarm = async (params: DelegateSwarmParams, ctx: ExtensionContext): Promise<{ swarmId: string; tasks: TaskRecord[] }> => {
     if (params.tasks.length < 2) throw new Error("A swarm needs at least two worker tasks. Use delegate_task or /bg for a single worker.");
     const activeRuntime = await ensureRuntime();
+    const owner = completionOwnerFromContext(ctx);
     const prepared = toLaunchSwarmInputs(params, ctx.cwd);
-    const launched = await activeRuntime.launchTasks(prepared.tasks);
+    const launched = await activeRuntime.launchTasks(prepared.tasks.map((task) => ({ ...task, ...owner })));
     return { swarmId: prepared.swarmId, tasks: launched };
   };
 
@@ -835,17 +853,28 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
       const activeRuntime = await ensureRuntime();
       const allTasks = await activeRuntime.store.listTasks();
       const idle = ctx.isIdle();
+      const owner = completionOwnerFromContext(ctx);
 
-      const markReported = async (tasks: TaskRecord[]): Promise<void> => {
+      const markReported = async (tasks: TaskRecord[], deliveryOverride?: "mark-only"): Promise<void> => {
         const reportedAt = activeRuntime.now();
+        const delivery = deliveryOverride ?? (idle ? "idle-follow-up" : "active-steering");
         for (const task of tasks) {
-          if (!task.reportedAt) await activeRuntime.store.updateTask({ ...task, reportedAt });
+          if (!task.reportedAt) {
+            await activeRuntime.store.updateTask({
+              ...task,
+              reportedAt,
+              reportDeliveryLog: [
+                ...(task.reportDeliveryLog ?? []),
+                { sessionId: owner.ownerSessionId, deliveredAt: reportedAt, delivery },
+              ],
+            });
+          }
         }
       };
 
-      for (const plan of planCompletionReports(allTasks, autoReportCutoffAt)) {
+      for (const plan of planCompletionReports(allTasks, autoReportCutoffAt, owner.ownerSessionId)) {
         if (plan.kind === "mark-only") {
-          await markReported(plan.tasks);
+          await markReported(plan.tasks, "mark-only");
           continue;
         }
 
@@ -958,6 +987,7 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
       task: taskText,
       title: taskText,
       cwd: ctx.cwd,
+      ...completionOwnerFromContext(ctx),
     });
 
     await announceTaskLaunch(task, ctx);
@@ -1173,7 +1203,10 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
     async execute(_toolCallId, params: DelegateTaskParams, _signal, _onUpdate, ctx: ExtensionContext) {
       const activeRuntime = await ensureRuntime();
       const waitForResult = Boolean(params.waitForResult);
-      const task = await activeRuntime.launchTask(toLaunchTaskInput(params, ctx.cwd));
+      const task = await activeRuntime.launchTask({
+        ...toLaunchTaskInput(params, ctx.cwd),
+        ...completionOwnerFromContext(ctx),
+      });
       await announceTaskLaunch(task, ctx, waitForResult);
       await refreshStatus(ctx);
       return buildDelegateTaskResult(task, waitForResult);

@@ -43,6 +43,9 @@ function normalizeTaskRecord(task: TaskRecord): TaskRecord {
   return {
     ...task,
     reportedAt: task.reportedAt ?? null,
+    ownerSessionId: task.ownerSessionId ?? null,
+    ownerSessionFile: task.ownerSessionFile ?? null,
+    reportDeliveryLog: Array.isArray(task.reportDeliveryLog) ? task.reportDeliveryLog : null,
     swarmId: task.swarmId ?? null,
     swarmRole: task.swarmRole ?? task.roleHint ?? null,
     taskType: task.taskType ?? null,

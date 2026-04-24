@@ -244,6 +244,30 @@ test("planCompletionReports marks partially reported legacy swarms without noisy
   assert.deepEqual(plans[0].tasks.map((task) => task.id), ["task-2"]);
 });
 
+test("planCompletionReports only reports owned tasks in the owning session", () => {
+  const tasks = [
+    makeTask({ id: "task-1", status: "succeeded", finishedAt: "2026-04-22T12:05:00.000Z", ownerSessionId: "session-a" }),
+    makeTask({ id: "task-2", status: "succeeded", finishedAt: "2026-04-22T12:06:00.000Z", ownerSessionId: "session-b" }),
+    makeTask({ id: "task-3", status: "succeeded", finishedAt: "2026-04-22T12:07:00.000Z" }),
+  ];
+  const sessionAPlans = planCompletionReports(tasks, null, "session-a");
+  assert.deepEqual(sessionAPlans.map((plan) => plan.tasks.map((task) => task.id)).flat(), ["task-3", "task-1"]);
+
+  const unknownSessionPlans = planCompletionReports(tasks, null, null);
+  assert.deepEqual(unknownSessionPlans.map((plan) => plan.tasks.map((task) => task.id)).flat(), ["task-3"]);
+});
+
+test("planCompletionReports groups only swarm tasks owned by the current session", () => {
+  const plans = planCompletionReports([
+    makeTask({ id: "task-1", swarmId: "swarm-1", status: "succeeded", finishedAt: "2026-04-22T12:05:00.000Z", ownerSessionId: "session-a" }),
+    makeTask({ id: "task-2", swarmId: "swarm-1", status: "succeeded", finishedAt: "2026-04-22T12:06:00.000Z", ownerSessionId: "session-a" }),
+    makeTask({ id: "task-3", swarmId: "swarm-1", status: "succeeded", finishedAt: "2026-04-22T12:07:00.000Z", ownerSessionId: "session-b" }),
+  ], null, "session-a");
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0].kind, "swarm");
+  assert.deepEqual(plans[0].tasks.map((task) => task.id), ["task-1", "task-2"]);
+});
+
 test("buildCompletionDeliveryOptions steers active reports and follows up idle reports", () => {
   assert.deepEqual(buildCompletionDeliveryOptions(false), { triggerTurn: false, deliverAs: "steer" });
   assert.deepEqual(buildCompletionDeliveryOptions(true), { triggerTurn: true, deliverAs: "followUp" });
