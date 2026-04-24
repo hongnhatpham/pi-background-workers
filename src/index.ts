@@ -229,6 +229,17 @@ export interface CompletionMessageDetails {
   resultsCommand: string;
 }
 
+export interface CompletionDeliveryOptions {
+  triggerTurn: boolean;
+  deliverAs: "steer" | "followUp";
+}
+
+export function buildCompletionDeliveryOptions(isIdle: boolean): CompletionDeliveryOptions {
+  return isIdle
+    ? { triggerTurn: true, deliverAs: "followUp" }
+    : { triggerTurn: false, deliverAs: "steer" };
+}
+
 export function summarizeCompletion(result: TaskResult): string {
   if (result.outputFormatSatisfied) return result.summary;
   if (result.status === "cancelled" || result.status === "timed_out" || result.status === "failed") {
@@ -324,9 +335,10 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
     });
   };
 
-  const deliverFinishedTaskReports = async (): Promise<void> => {
+  const deliverFinishedTaskReports = async (ctx: ExtensionContext): Promise<void> => {
     const activeRuntime = await ensureRuntime();
     const groups = await activeRuntime.listTasks(20);
+    const idle = ctx.isIdle();
     for (const task of groups.recent) {
       if (task.reportedAt) continue;
       if (autoReportCutoffAt && task.finishedAt && task.finishedAt < autoReportCutoffAt) {
@@ -344,9 +356,12 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
           customType: COMPLETION_MESSAGE_TYPE,
           content: completion.content,
           display: true,
-          details: completion.details,
+          details: {
+            ...completion.details,
+            delivery: idle ? "idle-follow-up" : "active-steering",
+          },
         },
-        { triggerTurn: true, deliverAs: "followUp" },
+        buildCompletionDeliveryOptions(idle),
       );
       await activeRuntime.store.updateTask({
         ...task,
@@ -360,12 +375,12 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
     await ensureRuntime();
     clearPersistentWidget(ctx);
     await refreshStatus(ctx);
-    await deliverFinishedTaskReports();
+    await deliverFinishedTaskReports(ctx);
     if (ctx.hasUI) {
       clearStatusTimer();
       statusTimer = setInterval(() => {
         void refreshStatus(ctx);
-        void deliverFinishedTaskReports();
+        void deliverFinishedTaskReports(ctx);
       }, STATUS_POLL_MS);
     }
   });

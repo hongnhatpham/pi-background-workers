@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildCompletionDeliveryOptions,
   buildCompletionMessage,
   buildLaunchMessage,
   buildStatusText,
@@ -118,6 +119,11 @@ test("buildCompletionMessage includes summary and inspection commands", () => {
   assert.match(completion.content, /Summary: Found the stale CSS cause/);
   assert.equal(completion.details.showCommand, "/bg-show task-1");
   assert.equal(completion.details.resultsCommand, "/bg-results task-1");
+});
+
+test("buildCompletionDeliveryOptions steers active reports and follows up idle reports", () => {
+  assert.deepEqual(buildCompletionDeliveryOptions(false), { triggerTurn: false, deliverAs: "steer" });
+  assert.deepEqual(buildCompletionDeliveryOptions(true), { triggerTurn: true, deliverAs: "followUp" });
 });
 
 test("buildCompletionMessage suppresses output quality note for cancelled tasks", () => {

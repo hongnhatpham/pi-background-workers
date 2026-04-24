@@ -16,6 +16,7 @@ This repo is now the clean-room home for a new design:
 - quick return to the main conversation
 - persistent task visibility
 - visible launch/completion announcements so delegated work is never silent
+- completion reports steer the active agent turn when work finishes mid-response, but only trigger a follow-up turn when Pi is idle
 - small Pi-native command and tool surface
 
 ## Current contents
@@ -33,6 +34,7 @@ This repo is now the clean-room home for a new design:
 - reload-safe state reconstruction
 - launch visibility for both `/bg` and `delegate_task`: status text, UI notification, and displayed transcript message
 - `/bg-list`, `/bg-show`, and `/bg-results` render into the transcript instead of leaving a stale persistent bottom widget
+- finished worker reports use active-turn steering while the assistant is working, and idle follow-up only after the assistant has finished
 
 ## Repo reset note
 
