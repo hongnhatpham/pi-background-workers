@@ -10,6 +10,7 @@ import {
   buildSwarmDetailWidget,
   buildSwarmLaunchMessage,
   assessSwarmOpportunity,
+  buildDelegationFirstBlockReason,
   buildSwarmPolicyPrompt,
   buildSuggestedSwarmShape,
   buildTaskDetailWidget,
@@ -234,6 +235,21 @@ test("assessSwarmOpportunity treats delegation-system requests as explicit swarm
   assert.equal(assessment.level, "explicit");
   assert.ok(assessment.reasons.some((reason) => reason.includes("explicitly")));
   assert.ok(assessment.reasons.some((reason) => reason.includes("architecture")));
+});
+
+test("buildDelegationFirstBlockReason nudges explicit delegation requests before local tools", () => {
+  const assessment = assessSwarmOpportunity("Please evolve delegation into an agent swarm system and parallelize as much as makes sense");
+  const reason = buildDelegationFirstBlockReason(assessment, "bash");
+  assert.match(reason ?? "", /Delegation-first policy/);
+  assert.match(reason ?? "", /delegate_swarm/);
+  assert.equal(buildDelegationFirstBlockReason(assessment, "delegate_swarm"), null);
+});
+
+test("buildDelegationFirstBlockReason nudges swarm-worthy edits before mutating tools", () => {
+  const assessment = assessSwarmOpportunity("Implement and review a multi-file runtime change, update docs, and add tests");
+  assert.equal(assessment.level, "swarm");
+  assert.match(buildDelegationFirstBlockReason(assessment, "edit") ?? "", /swarm-worthy/);
+  assert.equal(buildDelegationFirstBlockReason(assessment, "read"), null);
 });
 
 test("buildSuggestedSwarmShape proposes bounded worker slices", () => {

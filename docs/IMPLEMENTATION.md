@@ -318,6 +318,8 @@ Let the main assistant delegate work programmatically.
 - [x] Tool should return quickly by default
 - [x] Tool result should include task id + inspection hints
 - [x] `delegate_swarm` should accept 2-8 bounded worker objectives and stamp them with a shared swarm id
+- [x] Add delegation-first prompt policy for explicit/swarm-worthy user requests
+- [x] Add one-shot tool-call nudge so explicit delegation requests do not silently proceed with local-only tools
 - [ ] Add tool rendering if useful
 
 ### Acceptance criteria
@@ -325,6 +327,7 @@ Let the main assistant delegate work programmatically.
 - main assistant can launch background work without monopolizing the conversation
 - main assistant can fan out independent strands in one tool call
 - tool behavior is background-first by default
+- explicit delegation/swarm requests are actively nudged toward `delegate_swarm`/`delegate_task` before unrelated local tools
 
 ---
 

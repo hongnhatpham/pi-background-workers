@@ -298,6 +298,23 @@ Each task may also include `title`, `role`, `taskType`, `roleHint`, `parentTaskI
 
 The runtime still enforces the global concurrency cap, so a swarm can queue excess tasks instead of launching an unbounded number of Pi processes.
 
+## Delegation-first model behavior
+
+The extension does two things to make the main assistant use delegation more often:
+
+1. It appends turn-specific swarm policy to the system prompt, including an assessment of whether the current user request is explicit, swarm-worthy, task-worthy, or not worth delegating.
+2. It applies a one-shot tool-call nudge before local-only work when delegation is clearly expected.
+
+The nudge is intentionally bounded:
+
+- explicit delegation, swarm, fan-out, or background-worker requests block the first non-delegation tool call and instruct the model to launch `delegate_swarm` or `delegate_task` first
+- swarm-worthy requests block the first mutating/expensive local tool (`bash`, `edit`, or `write`) before a delegation tool has been used
+- task-worthy requests only nudge before `edit` or `write`
+- the nudge fires at most once per turn and is skipped once `delegate_task` or `delegate_swarm` has been called
+- users can still opt out by saying not to delegate, and operators can disable the guardrail with `PI_BACKGROUND_WORKERS_DELEGATION_NUDGE=0`
+
+This is meant to be a behavioral affordance, not an autopilot. The main assistant remains responsible for deciding when coordination overhead is larger than the benefit.
+
 ## Status model
 
 Each task should have a simple lifecycle.

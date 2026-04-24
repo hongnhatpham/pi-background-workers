@@ -15,6 +15,8 @@ const LAUNCH_MESSAGE_TYPE = "pi-background-workers-launch";
 const SWARM_LAUNCH_MESSAGE_TYPE = "pi-background-workers-swarm-launch";
 const PANEL_MESSAGE_TYPE = "pi-background-workers-panel";
 const SWARM_POLICY_MARKER = "## Background worker swarm policy";
+const DELEGATION_TOOL_NAMES = new Set(["delegate_task", "delegate_swarm"]);
+const MUTATING_OR_EXPENSIVE_TOOL_NAMES = new Set(["bash", "edit", "write"]);
 
 function truncate(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text;
@@ -513,6 +515,34 @@ export function assessSwarmOpportunity(prompt: string): { level: SwarmOpportunit
   return { level: "none", reasons };
 }
 
+export function buildDelegationFirstBlockReason(opportunity: { level: SwarmOpportunityLevel; reasons: string[] }, toolName: string): string | null {
+  if (DELEGATION_TOOL_NAMES.has(toolName)) return null;
+
+  if (opportunity.level === "explicit") {
+    return [
+      "Delegation-first policy: the user explicitly asked for delegation, parallelization, background workers, or an agent swarm.",
+      `Before using ${toolName}, launch delegate_swarm with 2-4 bounded workers when there are independent strands, or delegate_task if there is only one useful background strand.`,
+      "If you intentionally choose not to delegate, explain the concrete blocker in a brief assistant response instead of proceeding silently.",
+    ].join(" ");
+  }
+
+  if (opportunity.level === "swarm" && MUTATING_OR_EXPENSIVE_TOOL_NAMES.has(toolName)) {
+    return [
+      "Delegation-first policy: this request appears swarm-worthy.",
+      `Before using ${toolName}, launch delegate_swarm for independent reconnaissance, implementation, verification, docs, or code-area strands, unless coordination overhead is clearly larger than the work.`,
+    ].join(" ");
+  }
+
+  if (opportunity.level === "task" && (toolName === "edit" || toolName === "write")) {
+    return [
+      "Delegation-first policy: this request likely has a useful background strand.",
+      `Before using ${toolName}, consider launching delegate_task or delegate_swarm so review/recon can run while you coordinate.`,
+    ].join(" ");
+  }
+
+  return null;
+}
+
 export function buildSuggestedSwarmShape(opportunity: { level: SwarmOpportunityLevel; reasons: string[] }): string[] {
   if (opportunity.level === "none") return [];
 
@@ -567,6 +597,9 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
   let runtime: BackgroundWorkerRuntime | null = null;
   let statusTimer: NodeJS.Timeout | null = null;
   let autoReportCutoffAt: string | null = null;
+  let currentTurnDelegationOpportunity: { level: SwarmOpportunityLevel; reasons: string[] } | null = null;
+  let currentTurnDelegationToolSeen = false;
+  let currentTurnDelegationNudgeUsed = false;
 
   const ensureRuntime = async (): Promise<BackgroundWorkerRuntime> => {
     if (!runtime) {
@@ -689,11 +722,32 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("before_agent_start", async (event) => {
+    currentTurnDelegationToolSeen = false;
+    currentTurnDelegationNudgeUsed = false;
+    if (isBackgroundWorkerSessionPrompt(event.systemPrompt)) {
+      currentTurnDelegationOpportunity = null;
+      return;
+    }
+    currentTurnDelegationOpportunity = assessSwarmOpportunity(event.prompt);
     if (event.systemPrompt.includes(SWARM_POLICY_MARKER)) return;
-    if (isBackgroundWorkerSessionPrompt(event.systemPrompt)) return;
     return {
       systemPrompt: `${event.systemPrompt}\n\n${buildSwarmPolicyPrompt(event.prompt)}`,
     };
+  });
+
+  pi.on("tool_call", async (event) => {
+    if (DELEGATION_TOOL_NAMES.has(event.toolName)) {
+      currentTurnDelegationToolSeen = true;
+      return;
+    }
+    if (currentTurnDelegationToolSeen || currentTurnDelegationNudgeUsed) return;
+    if (process.env.PI_BACKGROUND_WORKERS_DELEGATION_NUDGE === "0") return;
+    const opportunity = currentTurnDelegationOpportunity;
+    if (!opportunity) return;
+    const reason = buildDelegationFirstBlockReason(opportunity, event.toolName);
+    if (!reason) return;
+    currentTurnDelegationNudgeUsed = true;
+    return { block: true, reason };
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
