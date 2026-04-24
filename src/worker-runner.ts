@@ -54,8 +54,10 @@ export function getPiInvocation(baseArgs: string[], piCommand?: string): PiInvoc
   return { command: "pi", args: baseArgs };
 }
 
-function extractAssistantText(message: unknown): string {
+export function extractAssistantText(message: unknown): string {
   if (!message || typeof message !== "object") return "";
+  const role = (message as { role?: unknown }).role;
+  if (role !== "assistant") return "";
   const content = (message as { content?: unknown }).content;
   if (!Array.isArray(content)) return "";
   return content
@@ -188,24 +190,26 @@ export async function runWorkerInBackground(options: WorkerRunOptions): Promise<
     await store.appendWorkerStdoutEvent(task.id, parsed);
 
     if (!parsed || typeof parsed !== "object") return;
-    const event = parsed as { type?: string; message?: unknown };
-    if (event.type === "message_end") {
-      const text = extractAssistantText(event.message);
-      if (!text) return;
-      assistantState.finalText = text;
-      latestTask = {
-        ...latestTask,
-        updatedAt: now(),
-        latestNote: text.slice(0, 240),
-      };
-      await store.updateTask(latestTask);
-      await store.appendEvent({
-        taskId: task.id,
-        at: latestTask.updatedAt,
-        kind: "task.progress",
-        message: text.slice(0, 240),
-      });
-    }
+    const event = parsed as { type?: string; message?: unknown; assistantMessageEvent?: { partial?: unknown } };
+    const text = event.type === "message_end"
+      ? extractAssistantText(event.message)
+      : event.type === "message_update"
+        ? (extractAssistantText(event.message) || extractAssistantText(event.assistantMessageEvent?.partial))
+        : "";
+    if (!text) return;
+    assistantState.finalText = text;
+    latestTask = {
+      ...latestTask,
+      updatedAt: now(),
+      latestNote: text.slice(0, 240),
+    };
+    await store.updateTask(latestTask);
+    await store.appendEvent({
+      taskId: task.id,
+      at: latestTask.updatedAt,
+      kind: "task.progress",
+      message: text.slice(0, 240),
+    });
   };
 
   const finalize = async (

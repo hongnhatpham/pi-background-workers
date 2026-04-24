@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildWorkerArgs, getPiInvocation, normalizeTaskResult } from "../src/worker-runner.js";
+import { buildWorkerArgs, extractAssistantText, getPiInvocation, normalizeTaskResult } from "../src/worker-runner.js";
 
 test("buildWorkerArgs includes prompt path, model, tools, and task", () => {
   const args = buildWorkerArgs(
@@ -77,6 +77,23 @@ test("normalizeTaskResult omits no-files-changed sentinel", () => {
   assert.deepEqual(result.filesChanged, []);
   assert.equal(result.outputFormatSatisfied, true);
   assert.deepEqual(result.validationIssues, []);
+});
+
+test("extractAssistantText captures assistant text and ignores tool/user messages", () => {
+  assert.equal(extractAssistantText({
+    role: "assistant",
+    content: [{ type: "text", text: "## Done\nWorker report" }],
+  }), "## Done\nWorker report");
+
+  assert.equal(extractAssistantText({
+    role: "toolResult",
+    content: [{ type: "text", text: "pid-alive" }],
+  }), "");
+
+  assert.equal(extractAssistantText({
+    role: "user",
+    content: [{ type: "text", text: "Task prompt" }],
+  }), "");
 });
 
 test("getPiInvocation respects explicit command override", () => {
