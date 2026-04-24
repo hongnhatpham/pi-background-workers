@@ -9,6 +9,7 @@ const WIDGET_KEY = "pi-background-workers";
 const STATUS_POLL_MS = 2_000;
 const COMPLETION_MESSAGE_TYPE = "pi-background-workers-completion";
 const LAUNCH_MESSAGE_TYPE = "pi-background-workers-launch";
+const PANEL_MESSAGE_TYPE = "pi-background-workers-panel";
 
 function truncate(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text;
@@ -296,10 +297,23 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
     }
   };
 
+  const showTranscriptPanel = (title: string, lines: string[], details: Record<string, unknown> = {}): void => {
+    pi.sendMessage({
+      customType: PANEL_MESSAGE_TYPE,
+      content: lines.join("\n"),
+      display: true,
+      details: { title, ...details },
+    });
+  };
+
+  const clearPersistentWidget = (ctx: ExtensionContext): void => {
+    if (ctx.hasUI) ctx.ui.setWidget(WIDGET_KEY, undefined);
+  };
+
   const announceTaskLaunch = async (task: TaskRecord, ctx: ExtensionContext, waitForResult = false): Promise<void> => {
     const launch = buildLaunchMessage(task, waitForResult);
+    clearPersistentWidget(ctx);
     if (ctx.hasUI) {
-      ctx.ui.setWidget(WIDGET_KEY, buildTaskDetailWidget(task));
       ctx.ui.notify(`Background task started: ${truncate(task.title, 72)}`, "info");
     }
     pi.sendMessage({
@@ -344,6 +358,7 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     autoReportCutoffAt = new Date().toISOString();
     await ensureRuntime();
+    clearPersistentWidget(ctx);
     await refreshStatus(ctx);
     await deliverFinishedTaskReports();
     if (ctx.hasUI) {
@@ -358,7 +373,7 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
   pi.on("session_shutdown", async (_event, ctx) => {
     clearStatusTimer();
     ctx.ui.setStatus(STATUS_KEY, undefined);
-    ctx.ui.setWidget(WIDGET_KEY, undefined);
+    clearPersistentWidget(ctx);
     autoReportCutoffAt = null;
     if (runtime) {
       await runtime.shutdown();
@@ -392,8 +407,9 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
     handler: async (_args, ctx) => {
       const activeRuntime = await ensureRuntime();
       const groups = await activeRuntime.listTasks();
-      ctx.ui.setWidget(WIDGET_KEY, buildTaskListWidget(groups));
-      ctx.ui.notify("Updated background task list.", "info");
+      clearPersistentWidget(ctx);
+      showTranscriptPanel("Background tasks", buildTaskListWidget(groups), { command: "bg-list" });
+      ctx.ui.notify("Added background task list to transcript.", "info");
       await refreshStatus(ctx);
     },
   });
@@ -415,8 +431,9 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
       }
 
       const result = await activeRuntime.getTaskResult(taskId);
-      ctx.ui.setWidget(WIDGET_KEY, buildTaskDetailWidget(task, result));
-      ctx.ui.notify(`Showing task ${task.id}.`, "info");
+      clearPersistentWidget(ctx);
+      showTranscriptPanel(`Background task ${task.id}`, buildTaskDetailWidget(task, result), { command: "bg-show", taskId: task.id });
+      ctx.ui.notify(`Added task ${task.id} to transcript.`, "info");
       await refreshStatus(ctx);
     },
   });
@@ -442,7 +459,8 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
       }
 
       const result = await activeRuntime.getTaskResult(taskId);
-      ctx.ui.setWidget(WIDGET_KEY, buildTaskDetailWidget(cancelled.task, result));
+      clearPersistentWidget(ctx);
+      showTranscriptPanel(`Background task ${taskId}`, buildTaskDetailWidget(cancelled.task, result), { command: "bg-cancel", taskId });
       ctx.ui.notify(`Cancellation requested for ${taskId}.`, "info");
       await refreshStatus(ctx);
     },
@@ -467,13 +485,15 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
       const result = await activeRuntime.getTaskResult(taskId);
       if (!result) {
         ctx.ui.notify(`Task ${taskId} has no final result yet.`, "warning");
-        ctx.ui.setWidget(WIDGET_KEY, buildTaskDetailWidget(task));
+        clearPersistentWidget(ctx);
+        showTranscriptPanel(`Background task ${taskId}`, buildTaskDetailWidget(task), { command: "bg-results", taskId });
         await refreshStatus(ctx);
         return;
       }
 
-      ctx.ui.setWidget(WIDGET_KEY, buildTaskResultWidget(task, result));
-      ctx.ui.notify(`Showing results for ${taskId}.`, "info");
+      clearPersistentWidget(ctx);
+      showTranscriptPanel(`Background task result ${taskId}`, buildTaskResultWidget(task, result), { command: "bg-results", taskId });
+      ctx.ui.notify(`Added results for ${taskId} to transcript.`, "info");
       await refreshStatus(ctx);
     },
   });

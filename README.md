@@ -31,7 +31,8 @@ This repo is now the clean-room home for a new design:
 - task snapshot + event log persistence
 - generic worker prompt
 - reload-safe state reconstruction
-- launch visibility for both `/bg` and `delegate_task`: status text, task widget, UI notification, and displayed launch message
+- launch visibility for both `/bg` and `delegate_task`: status text, UI notification, and displayed transcript message
+- `/bg-list`, `/bg-show`, and `/bg-results` render into the transcript instead of leaving a stale persistent bottom widget
 
 ## Repo reset note
 
