@@ -11,6 +11,7 @@ const WIDGET_KEY = "pi-background-workers";
 const STATUS_POLL_MS = 2_000;
 const MAX_SWARM_TASKS = 8;
 const COMPLETION_MESSAGE_TYPE = "pi-background-workers-completion";
+const SWARM_COMPLETION_MESSAGE_TYPE = "pi-background-workers-swarm-completion";
 const LAUNCH_MESSAGE_TYPE = "pi-background-workers-launch";
 const SWARM_LAUNCH_MESSAGE_TYPE = "pi-background-workers-swarm-launch";
 const PANEL_MESSAGE_TYPE = "pi-background-workers-panel";
@@ -164,10 +165,19 @@ function statusCounts(tasks: TaskRecord[]): Record<string, number> {
   }, {});
 }
 
+function isTerminalStatus(status: TaskRecord["status"]): boolean {
+  return status === "succeeded" || status === "failed" || status === "cancelled" || status === "timed_out";
+}
+
+function formatStatusCounts(tasks: TaskRecord[]): string {
+  const counts = statusCounts(tasks);
+  return Object.entries(counts).map(([status, count]) => `${status}=${count}`).join(" · ");
+}
+
 export function buildSwarmDetailWidget(swarmId: string, tasks: TaskRecord[], results: Array<TaskResult | null> = []): string[] {
   const lines = ["pi-background-workers", "", `Swarm: ${swarmId}`, `Tasks: ${tasks.length}`];
   const counts = statusCounts(tasks);
-  if (Object.keys(counts).length > 0) lines.push(`Status: ${Object.entries(counts).map(([status, count]) => `${status}=${count}`).join(" · ")}`);
+  if (Object.keys(counts).length > 0) lines.push(`Status: ${formatStatusCounts(tasks)}`);
   lines.push("");
   for (const [index, task] of tasks.entries()) {
     const result = results[index];
@@ -429,9 +439,86 @@ export interface CompletionMessageDetails {
   swarmRole?: string | null;
 }
 
+export interface SwarmCompletionMessageDetails {
+  swarmId: string;
+  status: "succeeded" | "partial" | "failed";
+  taskCount: number;
+  statusCounts: Record<string, number>;
+  summary: string;
+  changedFiles: string[];
+  validationIssues: string[];
+  riskNotes: string[];
+  adoptionBoundary: "not_adopted";
+  reviewBoundary: "review_not_opened";
+  commands: {
+    showSwarm: string;
+    synthesize: string;
+    openReview: string;
+    adoptHelp: string;
+  };
+  showCommand: string;
+  ariaReviewCommand: string;
+  ariaAdoptCommand: string;
+  tasks: Array<{
+    taskId: string;
+    title: string;
+    status: TaskResult["status"];
+    role: string | null;
+    taskType: string | null;
+    summary: string;
+    outputFormatSatisfied: boolean;
+    validationIssues: string[];
+    filesChanged: string[];
+    cwd: string;
+    resultsCommand: string;
+  }>;
+}
+
 export interface CompletionDeliveryOptions {
   triggerTurn: boolean;
   deliverAs: "steer" | "followUp";
+}
+
+export type CompletionReportPlan =
+  | { kind: "task"; task: TaskRecord; tasks: TaskRecord[] }
+  | { kind: "swarm"; swarmId: string; tasks: TaskRecord[] }
+  | { kind: "mark-only"; reason: "pre_cutoff" | "partially_reported_swarm"; tasks: TaskRecord[] };
+
+export function planCompletionReports(tasks: TaskRecord[], autoReportCutoffAt: string | null): CompletionReportPlan[] {
+  const terminalUnreported = tasks
+    .filter((task) => isTerminalStatus(task.status) && !task.reportedAt)
+    .sort((a, b) => (b.finishedAt ?? b.updatedAt).localeCompare(a.finishedAt ?? a.updatedAt));
+  const plans: CompletionReportPlan[] = [];
+  const seenSwarms = new Set<string>();
+  const beforeCutoff = (task: TaskRecord): boolean => Boolean(autoReportCutoffAt && task.finishedAt && task.finishedAt < autoReportCutoffAt);
+
+  for (const task of terminalUnreported) {
+    if (task.swarmId) {
+      if (seenSwarms.has(task.swarmId)) continue;
+      const swarmTasks = tasks
+        .filter((candidate) => candidate.swarmId === task.swarmId)
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      if (swarmTasks.length > 1) {
+        seenSwarms.add(task.swarmId);
+        if (swarmTasks.some((candidate) => !isTerminalStatus(candidate.status))) continue;
+        const unreportedSwarmTasks = swarmTasks.filter((candidate) => !candidate.reportedAt);
+        if (unreportedSwarmTasks.length === 0) continue;
+        if (swarmTasks.some((candidate) => candidate.reportedAt)) {
+          plans.push({ kind: "mark-only", reason: "partially_reported_swarm", tasks: unreportedSwarmTasks });
+        } else if (swarmTasks.every(beforeCutoff)) {
+          plans.push({ kind: "mark-only", reason: "pre_cutoff", tasks: swarmTasks });
+        } else {
+          plans.push({ kind: "swarm", swarmId: task.swarmId, tasks: swarmTasks });
+        }
+        continue;
+      }
+    }
+
+    if (beforeCutoff(task)) plans.push({ kind: "mark-only", reason: "pre_cutoff", tasks: [task] });
+    else plans.push({ kind: "task", task, tasks: [task] });
+  }
+
+  return plans;
 }
 
 export function buildCompletionDeliveryOptions(isIdle: boolean): CompletionDeliveryOptions {
@@ -480,6 +567,75 @@ export function buildCompletionMessage(task: TaskRecord, result: TaskResult): { 
       resultsCommand: `/bg-results ${task.id}`,
       swarmId: task.swarmId,
       swarmRole: task.swarmRole ?? task.roleHint,
+    },
+  };
+}
+
+export function buildSwarmCompletionMessage(swarmId: string, tasks: TaskRecord[], results: TaskResult[]): { content: string; details: SwarmCompletionMessageDetails } {
+  const counts = statusCounts(tasks);
+  const issueCount = results.filter((result) => result.status !== "succeeded").length;
+  const qualityIssueCount = results.filter((result) => result.status !== "cancelled" && !result.outputFormatSatisfied).length;
+  const status = issueCount === 0 ? "succeeded" : results.some((result) => result.status === "succeeded") ? "partial" : "failed";
+  const changedFiles = Array.from(new Set(results.flatMap((result) => result.filesChanged))).sort();
+  const validationIssues = Array.from(new Set(results.flatMap((result) => result.validationIssues))).filter(Boolean);
+  const riskNotes = results
+    .map((result, index) => ({ task: tasks[index], result }))
+    .filter(({ result }) => result.status !== "succeeded" || !result.outputFormatSatisfied)
+    .map(({ task, result }) => `${task.swarmRole ?? task.roleHint ?? task.id}: ${result.status}${result.validationIssues[0] ? ` — ${result.validationIssues[0]}` : ""}`);
+  const summary = issueCount === 0
+    ? `Status: succeeded — ${tasks.length} succeeded, 0 failed/timed out/cancelled.`
+    : `Status: ${status} — ${counts.succeeded ?? 0} succeeded, ${counts.failed ?? 0} failed, ${counts.timed_out ?? 0} timed out, ${counts.cancelled ?? 0} cancelled.`;
+  const taskDetails = tasks.map((task, index) => {
+    const result = results[index];
+    return {
+      taskId: task.id,
+      title: task.title,
+      status: result.status,
+      role: task.swarmRole ?? task.roleHint ?? null,
+      taskType: task.taskType ?? null,
+      summary: summarizeCompletion(result),
+      outputFormatSatisfied: result.outputFormatSatisfied,
+      validationIssues: result.validationIssues,
+      filesChanged: result.filesChanged,
+      cwd: task.cwd,
+      resultsCommand: `/bg-results ${task.id}`,
+    };
+  });
+  const taskLines = taskDetails.map((task) => `- ${task.role ?? task.taskId} [${task.status}]: ${truncate(task.summary, 180)}`);
+  const qualityNote = qualityIssueCount > 0
+    ? `\nOutput quality note: ${qualityIssueCount} task(s) returned unstructured output; inspect /bg-show-swarm ${swarmId} before adopting.`
+    : "";
+  const commands = {
+    showSwarm: `/bg-show-swarm ${swarmId}`,
+    synthesize: `/aria swarm synthesize ${swarmId}`,
+    openReview: `/aria swarm review ${swarmId} --write-inbox`,
+    adoptHelp: "/aria adopt-swarm accept|defer|dismiss <inbox-swarm-id-or-swarm-id> --reason <why>",
+  };
+  return {
+    content: [
+      `Background worker swarm finished: ${swarmId}`,
+      summary,
+      "",
+      "Findings:",
+      ...taskLines,
+      `${qualityNote}\n\nThis is not adopted yet. Review executor evidence with ${commands.showSwarm}. To open one ARIA evidence bundle, run ${commands.openReview}. Then make an explicit decision with /aria adopt-swarm accept|defer|dismiss only after review.`,
+    ].join("\n"),
+    details: {
+      swarmId,
+      status,
+      taskCount: tasks.length,
+      statusCounts: counts,
+      summary,
+      changedFiles,
+      validationIssues,
+      riskNotes,
+      adoptionBoundary: "not_adopted",
+      reviewBoundary: "review_not_opened",
+      commands,
+      showCommand: commands.showSwarm,
+      ariaReviewCommand: commands.openReview,
+      ariaAdoptCommand: commands.adoptHelp,
+      tasks: taskDetails,
     },
   };
 }
@@ -600,6 +756,7 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
   let currentTurnDelegationOpportunity: { level: SwarmOpportunityLevel; reasons: string[] } | null = null;
   let currentTurnDelegationToolSeen = false;
   let currentTurnDelegationNudgeUsed = false;
+  let deliveringFinishedReports = false;
 
   const ensureRuntime = async (): Promise<BackgroundWorkerRuntime> => {
     if (!runtime) {
@@ -672,37 +829,65 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
   };
 
   const deliverFinishedTaskReports = async (ctx: ExtensionContext): Promise<void> => {
-    const activeRuntime = await ensureRuntime();
-    const groups = await activeRuntime.listTasks(20);
-    const idle = ctx.isIdle();
-    for (const task of groups.recent) {
-      if (task.reportedAt) continue;
-      if (autoReportCutoffAt && task.finishedAt && task.finishedAt < autoReportCutoffAt) {
-        await activeRuntime.store.updateTask({
-          ...task,
-          reportedAt: activeRuntime.now(),
-        });
-        continue;
-      }
-      const result = await activeRuntime.getTaskResult(task.id);
-      if (!result) continue;
-      const completion = buildCompletionMessage(task, result);
-      pi.sendMessage(
-        {
-          customType: COMPLETION_MESSAGE_TYPE,
-          content: completion.content,
-          display: true,
-          details: {
-            ...completion.details,
-            delivery: idle ? "idle-follow-up" : "active-steering",
+    if (deliveringFinishedReports) return;
+    deliveringFinishedReports = true;
+    try {
+      const activeRuntime = await ensureRuntime();
+      const allTasks = await activeRuntime.store.listTasks();
+      const idle = ctx.isIdle();
+
+      const markReported = async (tasks: TaskRecord[]): Promise<void> => {
+        const reportedAt = activeRuntime.now();
+        for (const task of tasks) {
+          if (!task.reportedAt) await activeRuntime.store.updateTask({ ...task, reportedAt });
+        }
+      };
+
+      for (const plan of planCompletionReports(allTasks, autoReportCutoffAt)) {
+        if (plan.kind === "mark-only") {
+          await markReported(plan.tasks);
+          continue;
+        }
+
+        if (plan.kind === "swarm") {
+          const results = await Promise.all(plan.tasks.map((task) => activeRuntime.getTaskResult(task.id)));
+          if (results.some((result) => !result)) continue;
+          const completion = buildSwarmCompletionMessage(plan.swarmId, plan.tasks, results as TaskResult[]);
+          pi.sendMessage(
+            {
+              customType: SWARM_COMPLETION_MESSAGE_TYPE,
+              content: completion.content,
+              display: true,
+              details: {
+                ...completion.details,
+                delivery: idle ? "idle-follow-up" : "active-steering",
+              },
+            },
+            buildCompletionDeliveryOptions(idle),
+          );
+          await markReported(plan.tasks);
+          continue;
+        }
+
+        const result = await activeRuntime.getTaskResult(plan.task.id);
+        if (!result) continue;
+        const completion = buildCompletionMessage(plan.task, result);
+        pi.sendMessage(
+          {
+            customType: COMPLETION_MESSAGE_TYPE,
+            content: completion.content,
+            display: true,
+            details: {
+              ...completion.details,
+              delivery: idle ? "idle-follow-up" : "active-steering",
+            },
           },
-        },
-        buildCompletionDeliveryOptions(idle),
-      );
-      await activeRuntime.store.updateTask({
-        ...task,
-        reportedAt: activeRuntime.now(),
-      });
+          buildCompletionDeliveryOptions(idle),
+        );
+        await markReported([plan.task]);
+      }
+    } finally {
+      deliveringFinishedReports = false;
     }
   };
 

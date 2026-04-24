@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   buildCompletionDeliveryOptions,
   buildCompletionMessage,
+  buildSwarmCompletionMessage,
   buildLaunchMessage,
   buildStatusText,
   buildSwarmCancelWidget,
@@ -17,6 +18,7 @@ import {
   buildTaskListWidget,
   buildTaskResultWidget,
   formatTaskLine,
+  planCompletionReports,
   summarizeCompletion,
 } from "../src/index.js";
 import type { TaskRecord, TaskResult } from "../src/types.js";
@@ -172,6 +174,74 @@ test("buildCompletionMessage includes summary and inspection commands", () => {
   assert.match(completion.content, /Summary: Found the stale CSS cause/);
   assert.equal(completion.details.showCommand, "/bg-show task-1");
   assert.equal(completion.details.resultsCommand, "/bg-results task-1");
+});
+
+test("buildSwarmCompletionMessage renders grouped completion with adoption boundary", () => {
+  const tasks = [
+    makeTask({ id: "task-1", swarmId: "swarm-1", swarmRole: "scout", taskType: "scout", status: "succeeded", cwd: "/tmp/a" }),
+    makeTask({ id: "task-2", swarmId: "swarm-1", swarmRole: "verifier", taskType: "verification", status: "failed", cwd: "/tmp/a" }),
+  ];
+  const results = [
+    makeResult({ taskId: "task-1", status: "succeeded", summary: "Mapped runtime flow", filesChanged: ["src/index.ts"] }),
+    makeResult({ taskId: "task-2", status: "failed", summary: "Found a regression", filesChanged: ["test/index.test.ts"], outputFormatSatisfied: false, validationIssues: ["Missing Notes section."] }),
+  ];
+  const completion = buildSwarmCompletionMessage("swarm-1", tasks, results);
+  assert.match(completion.content, /Background worker swarm finished: swarm-1/);
+  assert.match(completion.content, /scout \[succeeded\]: Mapped runtime flow/);
+  assert.match(completion.content, /verifier \[failed\]: Found a regression/);
+  assert.match(completion.content, /\/bg-show-swarm swarm-1/);
+  assert.match(completion.content, /\/aria swarm review swarm-1 --write-inbox/);
+  assert.match(completion.content, /This is not adopted yet/);
+  assert.equal(completion.details.status, "partial");
+  assert.equal(completion.details.adoptionBoundary, "not_adopted");
+  assert.equal(completion.details.reviewBoundary, "review_not_opened");
+  assert.deepEqual(completion.details.changedFiles, ["src/index.ts", "test/index.test.ts"]);
+  assert.deepEqual(completion.details.validationIssues, ["Missing Notes section."]);
+  assert.equal(completion.details.commands.openReview, "/aria swarm review swarm-1 --write-inbox");
+  assert.equal(completion.details.tasks[1].cwd, "/tmp/a");
+  assert.equal(completion.details.tasks[1].filesChanged[0], "test/index.test.ts");
+});
+
+test("planCompletionReports holds swarm completion until all tasks are terminal", () => {
+  const plans = planCompletionReports([
+    makeTask({ id: "task-1", swarmId: "swarm-1", status: "succeeded", finishedAt: "2026-04-22T12:05:00.000Z" }),
+    makeTask({ id: "task-2", swarmId: "swarm-1", status: "running", finishedAt: null }),
+  ], null);
+  assert.deepEqual(plans, []);
+});
+
+test("planCompletionReports reports a terminal swarm once instead of per task", () => {
+  const plans = planCompletionReports([
+    makeTask({ id: "task-1", swarmId: "swarm-1", status: "succeeded", finishedAt: "2026-04-22T12:05:00.000Z" }),
+    makeTask({ id: "task-2", swarmId: "swarm-1", status: "succeeded", finishedAt: "2026-04-22T12:06:00.000Z" }),
+    makeTask({ id: "task-3", status: "succeeded", finishedAt: "2026-04-22T12:07:00.000Z" }),
+  ], null);
+  assert.equal(plans.length, 2);
+  assert.equal(plans[0].kind, "task");
+  assert.equal(plans[1].kind, "swarm");
+  assert.equal(plans[1].kind === "swarm" ? plans[1].swarmId : null, "swarm-1");
+  assert.deepEqual(plans[1].tasks.map((task) => task.id), ["task-1", "task-2"]);
+});
+
+test("planCompletionReports marks old pre-cutoff swarms reported without display", () => {
+  const plans = planCompletionReports([
+    makeTask({ id: "task-1", swarmId: "swarm-1", status: "succeeded", finishedAt: "2026-04-22T12:05:00.000Z" }),
+    makeTask({ id: "task-2", swarmId: "swarm-1", status: "succeeded", finishedAt: "2026-04-22T12:06:00.000Z" }),
+  ], "2026-04-22T12:10:00.000Z");
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0].kind, "mark-only");
+  assert.equal(plans[0].kind === "mark-only" ? plans[0].reason : null, "pre_cutoff");
+});
+
+test("planCompletionReports marks partially reported legacy swarms without noisy child completion", () => {
+  const plans = planCompletionReports([
+    makeTask({ id: "task-1", swarmId: "swarm-1", status: "succeeded", finishedAt: "2026-04-22T12:05:00.000Z", reportedAt: "2026-04-22T12:05:10.000Z" }),
+    makeTask({ id: "task-2", swarmId: "swarm-1", status: "succeeded", finishedAt: "2026-04-22T12:06:00.000Z" }),
+  ], null);
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0].kind, "mark-only");
+  assert.equal(plans[0].kind === "mark-only" ? plans[0].reason : null, "partially_reported_swarm");
+  assert.deepEqual(plans[0].tasks.map((task) => task.id), ["task-2"]);
 });
 
 test("buildCompletionDeliveryOptions steers active reports and follows up idle reports", () => {
