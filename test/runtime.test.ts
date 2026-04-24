@@ -41,6 +41,15 @@ function makeTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
     latestNote: null,
     resultSummary: null,
     reportedAt: null,
+    swarmId: null,
+    swarmRole: null,
+    taskType: null,
+    roleHint: null,
+    parentTaskId: null,
+    cancellationGroup: null,
+    acceptanceCriteria: null,
+    expectedArtifacts: null,
+    riskLevel: null,
     ...overrides,
   };
 }
@@ -99,6 +108,27 @@ test("launchTask creates queued task and stores it", async () => {
   assert.equal(stored?.status, "queued");
 });
 
+test("launchTasks creates a swarm batch before pumping queue", async () => {
+  const stateRoot = await makeTempRoot();
+  const store = new TaskStore({ stateRoot });
+  const runtime = new BackgroundWorkerRuntime({
+    store,
+    piCommand: process.execPath,
+    now: () => "2026-04-22T12:12:00.000Z",
+    config: { maxConcurrentWorkers: 0, defaultTimeoutMinutes: 5 },
+  });
+
+  await runtime.initialize();
+  const tasks = await runtime.launchTasks([
+    { task: "Scout", title: "Scout", cwd: process.cwd(), swarmId: "swarm-1", swarmRole: "scout", taskType: "scout" },
+    { task: "Verify", title: "Verify", cwd: process.cwd(), swarmId: "swarm-1", swarmRole: "verifier", taskType: "verification" },
+  ]);
+
+  assert.equal(tasks.length, 2);
+  assert.deepEqual(tasks.map((task) => task.swarmId), ["swarm-1", "swarm-1"]);
+  assert.deepEqual((await runtime.getSwarmTasks("swarm-1")).map((task) => task.swarmRole), ["scout", "verifier"]);
+});
+
 test("cancelTask can cancel a queued task before launch", async () => {
   const stateRoot = await makeTempRoot();
   const store = new TaskStore({ stateRoot });
@@ -121,6 +151,27 @@ test("cancelTask can cancel a queued task before launch", async () => {
 
   const result = await runtime.getTaskResult(task.id);
   assert.equal(result?.status, "cancelled");
+});
+
+test("cancelSwarm cancels queued swarm tasks", async () => {
+  const stateRoot = await makeTempRoot();
+  const store = new TaskStore({ stateRoot });
+  const runtime = new BackgroundWorkerRuntime({
+    store,
+    now: () => "2026-04-22T12:16:00.000Z",
+    config: { maxConcurrentWorkers: 0, defaultTimeoutMinutes: 5 },
+  });
+
+  await runtime.initialize();
+  await runtime.launchTasks([
+    { task: "Scout", title: "Scout", cwd: process.cwd(), swarmId: "swarm-cancel", swarmRole: "scout" },
+    { task: "Verify", title: "Verify", cwd: process.cwd(), swarmId: "swarm-cancel", swarmRole: "verifier" },
+  ]);
+
+  const cancelled = await runtime.cancelSwarm("swarm-cancel");
+  assert.equal(cancelled.accepted, 2);
+  assert.equal(cancelled.rejected, 0);
+  assert.deepEqual(cancelled.tasks.map((task) => task.status), ["cancelled", "cancelled"]);
 });
 
 test("listTasks groups running queued and recent tasks", async () => {

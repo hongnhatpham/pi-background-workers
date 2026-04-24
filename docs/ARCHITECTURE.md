@@ -73,7 +73,8 @@ The package should eventually ship as `pi-background-workers`.
 The package provides:
 
 - a background task registry
-- one tool for the model: `delegate_task`
+- one single-worker model tool: `delegate_task`
+- one multi-worker model tool: `delegate_swarm`
 - a small command surface for the user
 - worker process launching and supervision
 - persistent task snapshots and event logs
@@ -189,6 +190,24 @@ Examples:
 /bg trace the mcp config loading path and summarize failure modes
 ```
 
+### `/bg-swarm <task one || task two || ...>`
+
+Launch a small background swarm from the command line. The `||` separator keeps the v0 command parser simple while allowing explicit fan-out.
+
+Examples:
+
+```text
+/bg-swarm inspect current worker runtime || review prompt policy || check tests for brittle assumptions
+```
+
+### `/bg-show-swarm <swarm-id>`
+
+Show grouped task state for a swarm: counts, roles, latest notes, and compact result summaries.
+
+### `/bg-cancel-swarm <swarm-id>`
+
+Cancel all queued/running tasks in a swarm while preserving partial finished results. This is executor-owned cancellation; higher-level ARIA swarm commands should route live cancellation here.
+
 ### `/bg-list`
 
 Show active and recent tasks.
@@ -219,7 +238,7 @@ My preference is to standardize on `/bg*` internally and add aliases later.
 
 ### `delegate_task`
 
-This is the primary tool exposed to the main assistant.
+This launches one background worker.
 
 Its job is to create a background task, not to narrate delegation theatrically.
 
@@ -249,6 +268,35 @@ At minimum:
 - how to inspect it later
 
 If `waitForResult: true` is ever allowed, the tool may optionally block until completion, but that is explicitly not the default v0 flow.
+
+### `delegate_swarm`
+
+This is the preferred model tool when a request has independent strands that can run at the same time.
+
+Examples:
+
+- scout relevant code paths + review current tests
+- frontend slice + backend slice + docs slice
+- implementation worker + independent reviewer
+- multiple repository search areas
+
+#### Required fields
+
+- `tasks`: array of bounded worker objectives
+
+#### Optional shared fields
+
+- `objective`
+- `cwd`
+- `model`
+- `tools`
+- `priority`
+- `timeoutMinutes`
+- `waitForResults` (default `false`, ignored in v0)
+
+Each task may also include `title`, `role`, `taskType`, `roleHint`, `parentTaskId`, `cancellationGroup`, `acceptanceCriteria`, `expectedArtifacts`, `riskLevel`, `cwd`, `model`, `tools`, `priority`, and `timeoutMinutes`.
+
+The runtime still enforces the global concurrency cap, so a swarm can queue excess tasks instead of launching an unbounded number of Pi processes.
 
 ## Status model
 
@@ -426,6 +474,8 @@ The system should support multiple background workers, but not unbounded fan-out
 Recommended v0 defaults:
 
 - max concurrent workers: 3
+- max swarm size: 8 tasks
+- min swarm size: 2 tasks; use `delegate_task` or `/bg` for a single strand
 - queue excess tasks instead of launching all at once
 - simple FIFO scheduling is acceptable
 
@@ -478,7 +528,7 @@ No elaborate dashboard is required for v0.
 
 ## Main assistant behavior policy
 
-The main assistant should delegate when there is clear leverage, such as:
+The main assistant should delegate more readily than a stock coding assistant when there is clear leverage, such as:
 
 - long-running implementation
 - parallelizable research
@@ -490,8 +540,9 @@ The main assistant should not delegate reflexively for tiny tasks.
 
 Rule of thumb:
 
-- delegate for duration and parallelism
-- stay local for judgment, conversation, and synthesis
+- use `delegate_swarm` for independent strands that can run in parallel
+- use `delegate_task` for one long/noisy strand
+- stay local for judgment, conversation, synthesis, and tiny tasks
 
 ## Security and trust
 

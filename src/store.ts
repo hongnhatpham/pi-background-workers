@@ -43,6 +43,15 @@ function normalizeTaskRecord(task: TaskRecord): TaskRecord {
   return {
     ...task,
     reportedAt: task.reportedAt ?? null,
+    swarmId: task.swarmId ?? null,
+    swarmRole: task.swarmRole ?? task.roleHint ?? null,
+    taskType: task.taskType ?? null,
+    roleHint: task.roleHint ?? task.swarmRole ?? null,
+    parentTaskId: task.parentTaskId ?? null,
+    cancellationGroup: task.cancellationGroup ?? task.swarmId ?? null,
+    acceptanceCriteria: task.acceptanceCriteria ?? null,
+    expectedArtifacts: Array.isArray(task.expectedArtifacts) ? task.expectedArtifacts : null,
+    riskLevel: task.riskLevel ?? null,
   };
 }
 

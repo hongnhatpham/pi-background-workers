@@ -1,7 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildDelegateTaskResult, buildDelegateTaskText, toLaunchTaskInput } from "../src/index.js";
+import {
+  buildDelegateSwarmResult,
+  buildDelegateSwarmText,
+  buildDelegateTaskResult,
+  buildDelegateTaskText,
+  toLaunchSwarmInputs,
+  toLaunchTaskInput,
+} from "../src/index.js";
 import type { TaskRecord } from "../src/types.js";
 
 function makeTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
@@ -25,6 +32,15 @@ function makeTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
     latestNote: "Queued",
     resultSummary: null,
     reportedAt: null,
+    swarmId: null,
+    swarmRole: null,
+    taskType: null,
+    roleHint: null,
+    parentTaskId: null,
+    cancellationGroup: null,
+    acceptanceCriteria: null,
+    expectedArtifacts: null,
+    riskLevel: null,
     ...overrides,
   };
 }
@@ -52,6 +68,15 @@ test("toLaunchTaskInput normalizes delegate task params", () => {
     tools: ["read", "bash"],
     priority: "high",
     timeoutMinutes: 15,
+    swarmId: null,
+    swarmRole: null,
+    taskType: null,
+    roleHint: null,
+    parentTaskId: null,
+    cancellationGroup: null,
+    acceptanceCriteria: null,
+    expectedArtifacts: null,
+    riskLevel: null,
   });
 });
 
@@ -78,4 +103,67 @@ test("buildDelegateTaskResult returns task details and inspect commands", () => 
       cancel: "/bg-cancel task-1",
     },
   });
+});
+
+test("toLaunchSwarmInputs applies shared defaults and swarm metadata", () => {
+  const prepared = toLaunchSwarmInputs({
+    cwd: "/tmp/project",
+    model: "gpt-test",
+    timeoutMinutes: 7,
+    tools: ["read"],
+    priority: "high",
+    tasks: [
+      { task: "Find relevant files", role: "scout" },
+      { task: "Review likely changes", role: "reviewer", tools: ["read", "bash"] },
+    ],
+  }, "/fallback", "swarm-fixed");
+
+  assert.equal(prepared.swarmId, "swarm-fixed");
+  assert.deepEqual(prepared.tasks.map((task) => ({
+    task: task.task,
+    cwd: task.cwd,
+    model: task.model,
+    timeoutMinutes: task.timeoutMinutes,
+    tools: task.tools,
+    priority: task.priority,
+    swarmId: task.swarmId,
+    swarmRole: task.swarmRole,
+  })), [
+    {
+      task: "Find relevant files",
+      cwd: "/tmp/project",
+      model: "gpt-test",
+      timeoutMinutes: 7,
+      tools: ["read"],
+      priority: "high",
+      swarmId: "swarm-fixed",
+      swarmRole: "scout",
+    },
+    {
+      task: "Review likely changes",
+      cwd: "/tmp/project",
+      model: "gpt-test",
+      timeoutMinutes: 7,
+      tools: ["read", "bash"],
+      priority: "high",
+      swarmId: "swarm-fixed",
+      swarmRole: "reviewer",
+    },
+  ]);
+});
+
+test("buildDelegateSwarmText and result expose all task ids", () => {
+  const tasks = [
+    makeTask({ id: "task-1", swarmId: "swarm-1", swarmRole: "scout" }),
+    makeTask({ id: "task-2", swarmId: "swarm-1", swarmRole: "reviewer" }),
+  ];
+  const text = buildDelegateSwarmText("swarm-1", tasks, true);
+  assert.match(text, /Created background worker swarm swarm-1 with 2 task\(s\)/);
+  assert.match(text, /waitForResults is not supported in v0/);
+  assert.match(text, /task-1/);
+  assert.match(text, /task-2/);
+
+  const result = buildDelegateSwarmResult("swarm-1", tasks, false);
+  assert.equal(result.details.swarmId, "swarm-1");
+  assert.deepEqual(result.details.taskIds, ["task-1", "task-2"]);
 });

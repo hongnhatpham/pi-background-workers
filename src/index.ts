@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 import { Type } from "@sinclair/typebox";
 import { defineTool, type AgentToolResult, type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
 
@@ -7,9 +9,12 @@ import type { TaskPriority, TaskRecord, TaskResult } from "./types.js";
 const STATUS_KEY = "pi-background-workers";
 const WIDGET_KEY = "pi-background-workers";
 const STATUS_POLL_MS = 2_000;
+const MAX_SWARM_TASKS = 8;
 const COMPLETION_MESSAGE_TYPE = "pi-background-workers-completion";
 const LAUNCH_MESSAGE_TYPE = "pi-background-workers-launch";
+const SWARM_LAUNCH_MESSAGE_TYPE = "pi-background-workers-swarm-launch";
 const PANEL_MESSAGE_TYPE = "pi-background-workers-panel";
+const SWARM_POLICY_MARKER = "## Background worker swarm policy";
 
 function truncate(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text;
@@ -23,8 +28,10 @@ function formatTimestamp(timestamp: string | null): string {
 
 export function formatTaskLine(task: TaskRecord): string {
   const title = truncate(task.title || task.task, 56);
+  const role = task.swarmRole ?? task.roleHint;
+  const swarm = task.swarmId ? ` · swarm ${task.swarmId}${role ? `/${role}` : ""}` : "";
   const note = task.latestNote ? ` — ${truncate(task.latestNote, 72)}` : "";
-  return `[${task.status}] ${task.id} · ${title}${note}`;
+  return `[${task.status}] ${task.id}${swarm} · ${title}${note}`;
 }
 
 export function buildStatusText(groups: TaskList): string | undefined {
@@ -71,6 +78,7 @@ export function buildTaskDetailWidget(task: TaskRecord, result?: TaskResult | nu
     `${task.title}`,
     `ID: ${task.id}`,
     `Status: ${task.status}`,
+    `Swarm: ${task.swarmId ? `${task.swarmId}${task.swarmRole || task.roleHint ? ` / ${task.swarmRole ?? task.roleHint}` : ""}` : "—"}`,
     `CWD: ${task.cwd}`,
     `Created: ${formatTimestamp(task.createdAt)}`,
     `Started: ${formatTimestamp(task.startedAt)}`,
@@ -78,6 +86,13 @@ export function buildTaskDetailWidget(task: TaskRecord, result?: TaskResult | nu
     `PID: ${task.pid ?? "—"}`,
     `Exit code: ${task.exitCode ?? "—"}`,
   ];
+
+  if (task.taskType || task.roleHint || task.acceptanceCriteria || task.riskLevel) {
+    lines.push(`Type: ${task.taskType ?? "—"}`);
+    lines.push(`Role hint: ${task.roleHint ?? "—"}`);
+    lines.push(`Risk: ${task.riskLevel ?? "—"}`);
+    if (task.acceptanceCriteria) lines.push(`Acceptance: ${task.acceptanceCriteria}`);
+  }
 
   if (task.latestNote) {
     lines.push(`Latest note: ${task.latestNote}`);
@@ -135,6 +150,45 @@ function parseRequiredId(args: string): string | null {
   return id.length > 0 ? id : null;
 }
 
+function isBackgroundWorkerSessionPrompt(systemPrompt: string): boolean {
+  return systemPrompt.includes("You are the default general-purpose background worker for Pi.")
+    || systemPrompt.includes("Task metadata:\n- Task ID:");
+}
+
+function statusCounts(tasks: TaskRecord[]): Record<string, number> {
+  return tasks.reduce<Record<string, number>>((counts, task) => {
+    counts[task.status] = (counts[task.status] ?? 0) + 1;
+    return counts;
+  }, {});
+}
+
+export function buildSwarmDetailWidget(swarmId: string, tasks: TaskRecord[], results: Array<TaskResult | null> = []): string[] {
+  const lines = ["pi-background-workers", "", `Swarm: ${swarmId}`, `Tasks: ${tasks.length}`];
+  const counts = statusCounts(tasks);
+  if (Object.keys(counts).length > 0) lines.push(`Status: ${Object.entries(counts).map(([status, count]) => `${status}=${count}`).join(" · ")}`);
+  lines.push("");
+  for (const [index, task] of tasks.entries()) {
+    const result = results[index];
+    lines.push(`- ${task.id} [${task.status}] ${task.swarmRole ?? task.roleHint ?? "worker"}: ${task.title}`);
+    if (task.taskType || task.riskLevel) lines.push(`  type=${task.taskType ?? "—"} risk=${task.riskLevel ?? "—"}`);
+    if (task.latestNote) lines.push(`  note: ${truncate(task.latestNote, 140)}`);
+    if (result?.summary) lines.push(`  result: ${truncate(result.summary, 180)}`);
+  }
+  return lines;
+}
+
+export function buildSwarmCancelWidget(swarmId: string, accepted: number, rejected: number, tasks: TaskRecord[]): string[] {
+  return [
+    "pi-background-workers",
+    "",
+    `Swarm cancellation requested: ${swarmId}`,
+    `Accepted: ${accepted}`,
+    `Rejected: ${rejected}`,
+    "",
+    ...tasks.map((task) => `- ${task.id} [${task.status}] ${task.title}`),
+  ];
+}
+
 export interface DelegateTaskParams {
   task: string;
   title?: string;
@@ -146,16 +200,80 @@ export interface DelegateTaskParams {
   waitForResult?: boolean;
 }
 
-export function toLaunchTaskInput(params: DelegateTaskParams, cwd: string): LaunchTaskInput {
+export interface DelegateSwarmTaskParams extends DelegateTaskParams {
+  role?: string;
+  taskType?: string;
+  roleHint?: string;
+  parentTaskId?: string;
+  cancellationGroup?: string;
+  acceptanceCriteria?: string;
+  expectedArtifacts?: string[];
+  riskLevel?: string;
+}
+
+export interface DelegateSwarmParams {
+  objective?: string;
+  tasks: DelegateSwarmTaskParams[];
+  cwd?: string;
+  model?: string;
+  timeoutMinutes?: number;
+  tools?: string[];
+  priority?: TaskPriority;
+  waitForResults?: boolean;
+}
+
+export interface PreparedSwarmLaunch {
+  swarmId: string;
+  tasks: LaunchTaskInput[];
+}
+
+export function createSwarmId(now = new Date()): string {
+  const stamp = now.toISOString().replace(/[:.]/g, "-");
+  return `swarm-${stamp}-${crypto.randomBytes(3).toString("hex")}`;
+}
+
+function nonEmptyTools(tools?: string[]): string[] | null {
+  return tools && tools.length > 0 ? tools : null;
+}
+
+export function toLaunchTaskInput(params: DelegateTaskParams, cwd: string, swarmId?: string | null): LaunchTaskInput {
   return {
     task: params.task,
     title: params.title?.trim() || params.task.trim(),
     cwd: params.cwd?.trim() || cwd,
     model: params.model?.trim() || null,
-    tools: params.tools && params.tools.length > 0 ? params.tools : null,
+    tools: nonEmptyTools(params.tools),
     priority: params.priority ?? "normal",
     timeoutMinutes: typeof params.timeoutMinutes === "number" ? params.timeoutMinutes : null,
+    swarmId: swarmId ?? null,
+    swarmRole: (params as DelegateSwarmTaskParams).role?.trim() || (params as DelegateSwarmTaskParams).roleHint?.trim() || null,
+    taskType: (params as DelegateSwarmTaskParams).taskType?.trim() || null,
+    roleHint: (params as DelegateSwarmTaskParams).roleHint?.trim() || (params as DelegateSwarmTaskParams).role?.trim() || null,
+    parentTaskId: (params as DelegateSwarmTaskParams).parentTaskId?.trim() || null,
+    cancellationGroup: (params as DelegateSwarmTaskParams).cancellationGroup?.trim() || swarmId || null,
+    acceptanceCriteria: (params as DelegateSwarmTaskParams).acceptanceCriteria?.trim() || null,
+    expectedArtifacts: (params as DelegateSwarmTaskParams).expectedArtifacts && (params as DelegateSwarmTaskParams).expectedArtifacts!.length > 0 ? (params as DelegateSwarmTaskParams).expectedArtifacts! : null,
+    riskLevel: (params as DelegateSwarmTaskParams).riskLevel?.trim() || null,
   };
+}
+
+export function toLaunchSwarmInputs(params: DelegateSwarmParams, cwd: string, swarmId = createSwarmId()): PreparedSwarmLaunch {
+  const sharedCwd = params.cwd?.trim() || cwd;
+  const sharedObjective = params.objective?.trim();
+  const tasks = params.tasks.slice(0, MAX_SWARM_TASKS).map((task, index) => ({
+    ...toLaunchTaskInput({
+      ...task,
+      task: sharedObjective ? `Shared swarm objective: ${sharedObjective}\n\nWorker objective: ${task.task}` : task.task,
+      title: task.title?.trim() || task.task.trim(),
+      cwd: task.cwd?.trim() || sharedCwd,
+      model: task.model?.trim() || params.model,
+      timeoutMinutes: typeof task.timeoutMinutes === "number" ? task.timeoutMinutes : params.timeoutMinutes,
+      tools: task.tools && task.tools.length > 0 ? task.tools : params.tools,
+      priority: task.priority ?? params.priority ?? "normal",
+    }, sharedCwd, swarmId),
+    swarmRole: task.role?.trim() || `worker-${index + 1}`,
+  }));
+  return { swarmId, tasks };
 }
 
 export function buildDelegateTaskText(task: TaskRecord, waitForResult: boolean): string {
@@ -190,6 +308,43 @@ export function buildDelegateTaskResult(task: TaskRecord, waitForResult: boolean
   };
 }
 
+export function buildDelegateSwarmText(swarmId: string, tasks: TaskRecord[], waitForResults: boolean): string {
+  const waitNote = waitForResults
+    ? "waitForResults is not supported in v0; launched the swarm in the background instead."
+    : "Launched swarm in the background.";
+  return [
+    `Created background worker swarm ${swarmId} with ${tasks.length} task(s).`,
+    waitNote,
+    "Tasks:",
+    ...tasks.map((task) => `- ${task.id} [${task.status}] ${task.swarmRole ?? task.roleHint ? `${task.swarmRole ?? task.roleHint}: ` : ""}${task.title}`),
+    "",
+    "Use /bg-list for the whole queue, /bg-show <id> for detail, or /bg-results <id> as each worker finishes.",
+  ].join("\n");
+}
+
+export function buildDelegateSwarmResult(swarmId: string, tasks: TaskRecord[], waitForResults: boolean): AgentToolResult<Record<string, unknown>> {
+  return {
+    content: [{ type: "text", text: buildDelegateSwarmText(swarmId, tasks, waitForResults) }],
+    details: {
+      swarmId,
+      taskIds: tasks.map((task) => task.id),
+      waitForResultsIgnored: waitForResults,
+      tasks: tasks.map((task) => ({
+        taskId: task.id,
+        title: task.title,
+        status: task.status,
+        cwd: task.cwd,
+        role: task.swarmRole ?? task.roleHint ?? null,
+        inspectCommands: {
+          show: `/bg-show ${task.id}`,
+          results: `/bg-results ${task.id}`,
+          cancel: `/bg-cancel ${task.id}`,
+        },
+      })),
+    },
+  };
+}
+
 export interface LaunchMessageDetails {
   taskId: string;
   title: string;
@@ -218,6 +373,47 @@ export function buildLaunchMessage(task: TaskRecord, waitForResult: boolean): { 
   };
 }
 
+export interface SwarmLaunchMessageDetails {
+  swarmId: string;
+  taskCount: number;
+  waitForResultsIgnored: boolean;
+  tasks: Array<{
+    taskId: string;
+    title: string;
+    status: TaskRecord["status"];
+    role: string | null;
+    showCommand: string;
+    resultsCommand: string;
+    cancelCommand: string;
+  }>;
+}
+
+export function buildSwarmLaunchMessage(swarmId: string, tasks: TaskRecord[], waitForResults: boolean): { content: string; details: SwarmLaunchMessageDetails } {
+  const waitNote = waitForResults ? "\nNote: waitForResults is ignored in v0; this swarm is running in the background." : "";
+  return {
+    content: [
+      `Background worker swarm started: ${swarmId}`,
+      `Tasks: ${tasks.length}`,
+      ...tasks.map((task) => `- ${task.id} [${task.status}] ${task.swarmRole ?? task.roleHint ? `${task.swarmRole ?? task.roleHint}: ` : ""}${task.title}`),
+      `${waitNote}\nUse /bg-list for the queue, /bg-show <id>, /bg-results <id>, or /bg-cancel <id>.`,
+    ].join("\n"),
+    details: {
+      swarmId,
+      taskCount: tasks.length,
+      waitForResultsIgnored: waitForResults,
+      tasks: tasks.map((task) => ({
+        taskId: task.id,
+        title: task.title,
+        status: task.status,
+        role: task.swarmRole ?? task.roleHint ?? null,
+        showCommand: `/bg-show ${task.id}`,
+        resultsCommand: `/bg-results ${task.id}`,
+        cancelCommand: `/bg-cancel ${task.id}`,
+      })),
+    },
+  };
+}
+
 export interface CompletionMessageDetails {
   taskId: string;
   title: string;
@@ -227,6 +423,8 @@ export interface CompletionMessageDetails {
   validationIssues: string[];
   showCommand: string;
   resultsCommand: string;
+  swarmId?: string | null;
+  swarmRole?: string | null;
 }
 
 export interface CompletionDeliveryOptions {
@@ -278,8 +476,91 @@ export function buildCompletionMessage(task: TaskRecord, result: TaskResult): { 
       validationIssues: result.validationIssues,
       showCommand: `/bg-show ${task.id}`,
       resultsCommand: `/bg-results ${task.id}`,
+      swarmId: task.swarmId,
+      swarmRole: task.swarmRole ?? task.roleHint,
     },
   };
+}
+
+export type SwarmOpportunityLevel = "none" | "task" | "swarm" | "explicit";
+
+export function assessSwarmOpportunity(prompt: string): { level: SwarmOpportunityLevel; reasons: string[] } {
+  const normalized = prompt.toLowerCase();
+  const reasons: string[] = [];
+  const add = (reason: string) => {
+    if (!reasons.includes(reason)) reasons.push(reason);
+  };
+
+  if (/\b(do not delegate|don't delegate|no delegation|without delegat(?:ing|ion)|do not parallelize|don't parallelize)\b/.test(normalized)) {
+    return { level: "none", reasons: ["the user explicitly asked not to delegate or parallelize"] };
+  }
+
+  if (/\b(swarm\w*|parallel\w*|fan-?out|multiple workers|several workers|worker agents?|agent swarm|delegate\w*|delegation|background workers?)\b/.test(normalized)) {
+    add("the user explicitly mentioned delegation, swarm, fan-out, or parallel work");
+  }
+  if (/\b(investigate|inspect|research|trace|audit|analy[sz]e|find|search|compare|map|inventory|survey)\b/.test(normalized)) add("there is a reconnaissance strand");
+  if (/\b(implement|edit|write|patch|fix|update|refactor|build|modify|migrate|wire|integrate)\b/.test(normalized)) add("there is an implementation strand");
+  if (/\b(review|verify|test|smoke|check|validate|typecheck|lint|regression)\b/.test(normalized)) add("there is a verification strand");
+  if (/\b(evolve|design|architect|plan|revamp|improve|upgrade|strategy|workflow|policy|system)\b/.test(normalized)) add("there is an architecture or planning strand");
+  if (/\b(repo|repository|codebase|project|extension|package|architecture|multi-file|files|hooks?|tools?|runtime|orchestrator|integration)\b/.test(normalized)) add("the work likely spans a codebase, runtime, or multiple files");
+  if (prompt.trim().length >= 160) add("the request is substantial enough to split into bounded worker objectives");
+
+  const explicit = reasons.some((reason) => reason.includes("explicitly"));
+  const strandCount = ["reconnaissance", "implementation", "verification", "architecture"].filter((word) => reasons.some((reason) => reason.includes(word))).length;
+  if (explicit) return { level: "explicit", reasons };
+  if (strandCount >= 2 || reasons.length >= 4) return { level: "swarm", reasons };
+  if (reasons.length >= 2) return { level: "task", reasons };
+  return { level: "none", reasons };
+}
+
+export function buildSuggestedSwarmShape(opportunity: { level: SwarmOpportunityLevel; reasons: string[] }): string[] {
+  if (opportunity.level === "none") return [];
+
+  const has = (needle: string) => opportunity.reasons.some((reason) => reason.includes(needle));
+  const tasks: string[] = [];
+  if (has("reconnaissance")) tasks.push("- scout/recon worker: map relevant files, APIs, prior decisions, and constraints without editing.");
+  if (has("architecture")) tasks.push("- architecture/planning worker: propose the split, sequencing, risks, and adoption path.");
+  if (has("implementation")) tasks.push("- implementation worker: make one bounded code/doc change slice and report exact files changed.");
+  if (has("verification")) tasks.push("- verification/review worker: check tests, regressions, edge cases, and quality risks independently.");
+
+  if (tasks.length < 2 && opportunity.level === "explicit") {
+    tasks.push("- delegation scout: inspect the current delegation/background-worker surface and identify leverage points.");
+    tasks.push("- delegation policy worker: suggest concrete behavior/prompt/runtime changes that increase useful fan-out without needless overhead.");
+  }
+
+  return ["Suggested swarm shape when applicable:", ...tasks.slice(0, 4)];
+}
+
+export function buildSwarmPolicyPrompt(prompt: string): string {
+  const opportunity = assessSwarmOpportunity(prompt);
+  const assessment = opportunity.level === "none"
+    ? "Current turn assessment: no obvious delegation need unless hidden complexity appears."
+    : [
+        opportunity.level === "explicit"
+          ? "Current turn assessment: the user explicitly expects delegation/fan-out; use the background worker system early unless there is a concrete reason not to."
+          : opportunity.level === "swarm"
+            ? "Current turn assessment: this is swarm-worthy; split independent strands into a small worker swarm."
+            : "Current turn assessment: this likely deserves at least one background worker unless it collapses to a trivial local action.",
+        "Reasons:",
+        ...opportunity.reasons.map((reason) => `- ${reason}`),
+        ...buildSuggestedSwarmShape(opportunity),
+      ].join("\n");
+
+  return [
+    SWARM_POLICY_MARKER,
+    "You have two model-facing delegation tools: delegate_task for one background worker and delegate_swarm for launching 2-8 related workers in one call.",
+    "Use them much more aggressively than a default coding assistant would, while preserving judgment and avoiding needless theater.",
+    "Before deep reading, editing, or long local tool chains on non-trivial work, do a quick delegation triage and launch useful worker(s) first.",
+    "Default pattern for non-trivial coding/research work: launch workers early, keep yourself as coordinator/synthesizer, then continue the foreground conversation.",
+    "Prefer delegate_swarm when independent strands can run in parallel, such as scout/review/implementation, frontend/backend, docs/code, or multiple search areas.",
+    "Prefer delegate_task when there is one long/noisy strand that should not monopolize the main turn.",
+    "For requests about improving delegation, background workers, orchestration, or agent swarms, dogfood this system: launch a scout/planner/reviewer swarm unless the requested change is tiny.",
+    "Do not delegate genuinely tiny one-file edits, simple factual answers, or tasks where coordination overhead is clearly larger than the work.",
+    "When you do delegate, make worker objectives specific and bounded, usually 2-4 workers for broad tasks rather than one vague worker.",
+    "Background workers return asynchronously; report launch visibility to the user and synthesize finished reports when they arrive.",
+    "",
+    assessment,
+  ].join("\n");
 }
 
 export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
@@ -335,6 +616,28 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
     });
   };
 
+  const announceSwarmLaunch = async (swarmId: string, tasks: TaskRecord[], ctx: ExtensionContext, waitForResults = false): Promise<void> => {
+    const launch = buildSwarmLaunchMessage(swarmId, tasks, waitForResults);
+    clearPersistentWidget(ctx);
+    if (ctx.hasUI) {
+      ctx.ui.notify(`Background swarm started: ${tasks.length} task(s)`, "info");
+    }
+    pi.sendMessage({
+      customType: SWARM_LAUNCH_MESSAGE_TYPE,
+      content: launch.content,
+      display: true,
+      details: launch.details,
+    });
+  };
+
+  const launchSwarm = async (params: DelegateSwarmParams, ctx: ExtensionContext): Promise<{ swarmId: string; tasks: TaskRecord[] }> => {
+    if (params.tasks.length < 2) throw new Error("A swarm needs at least two worker tasks. Use delegate_task or /bg for a single worker.");
+    const activeRuntime = await ensureRuntime();
+    const prepared = toLaunchSwarmInputs(params, ctx.cwd);
+    const launched = await activeRuntime.launchTasks(prepared.tasks);
+    return { swarmId: prepared.swarmId, tasks: launched };
+  };
+
   const deliverFinishedTaskReports = async (ctx: ExtensionContext): Promise<void> => {
     const activeRuntime = await ensureRuntime();
     const groups = await activeRuntime.listTasks(20);
@@ -385,6 +688,14 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
     }
   });
 
+  pi.on("before_agent_start", async (event) => {
+    if (event.systemPrompt.includes(SWARM_POLICY_MARKER)) return;
+    if (isBackgroundWorkerSessionPrompt(event.systemPrompt)) return;
+    return {
+      systemPrompt: `${event.systemPrompt}\n\n${buildSwarmPolicyPrompt(event.prompt)}`,
+    };
+  });
+
   pi.on("session_shutdown", async (_event, ctx) => {
     clearStatusTimer();
     ctx.ui.setStatus(STATUS_KEY, undefined);
@@ -396,25 +707,61 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
     }
   });
 
+  const launchTaskFromCommand = async (args: string, ctx: ExtensionContext, usage: string): Promise<void> => {
+    const taskText = args.trim();
+    if (!taskText) {
+      ctx.ui.notify(`Usage: ${usage}`, "warning");
+      return;
+    }
+
+    const activeRuntime = await ensureRuntime();
+    const task = await activeRuntime.launchTask({
+      task: taskText,
+      title: taskText,
+      cwd: ctx.cwd,
+    });
+
+    await announceTaskLaunch(task, ctx);
+    await refreshStatus(ctx);
+  };
+
+  const launchSwarmFromCommand = async (args: string, ctx: ExtensionContext, usage: string): Promise<void> => {
+    const taskTexts = args
+      .split("||")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .slice(0, MAX_SWARM_TASKS);
+    if (taskTexts.length < 2) {
+      ctx.ui.notify(`${usage}\nA swarm needs at least two tasks. Use /bg for a single worker.`, "warning");
+      return;
+    }
+
+    const swarm = await launchSwarm({
+      tasks: taskTexts.map((task, index) => ({ task, title: task, role: `worker-${index + 1}` })),
+    }, ctx);
+
+    await announceSwarmLaunch(swarm.swarmId, swarm.tasks, ctx);
+    await refreshStatus(ctx);
+  };
+
   pi.registerCommand("bg", {
     description: "Launch a background worker (usage: /bg <task>)",
-    handler: async (args, ctx) => {
-      const taskText = args.trim();
-      if (!taskText) {
-        ctx.ui.notify("Usage: /bg <task>", "warning");
-        return;
-      }
+    handler: async (args, ctx) => launchTaskFromCommand(args, ctx, "/bg <task>"),
+  });
 
-      const activeRuntime = await ensureRuntime();
-      const task = await activeRuntime.launchTask({
-        task: taskText,
-        title: taskText,
-        cwd: ctx.cwd,
-      });
+  pi.registerCommand("delegate", {
+    description: "Alias for /bg. Launch one background worker (usage: /delegate <task>)",
+    handler: async (args, ctx) => launchTaskFromCommand(args, ctx, "/delegate <task>"),
+  });
 
-      await announceTaskLaunch(task, ctx);
-      await refreshStatus(ctx);
-    },
+  pi.registerCommand("bg-swarm", {
+    description: "Launch a background worker swarm (usage: /bg-swarm task one || task two || task three)",
+    handler: async (args, ctx) => launchSwarmFromCommand(args, ctx, "/bg-swarm task one || task two || task three"),
+  });
+
+  pi.registerCommand("swarm", {
+    description: "Alias for /bg-swarm. Launch a background worker swarm (usage: /swarm task one || task two)",
+    handler: async (args, ctx) => launchSwarmFromCommand(args, ctx, "/swarm task one || task two"),
   });
 
   pi.registerCommand("bg-list", {
@@ -449,6 +796,49 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
       clearPersistentWidget(ctx);
       showTranscriptPanel(`Background task ${task.id}`, buildTaskDetailWidget(task, result), { command: "bg-show", taskId: task.id });
       ctx.ui.notify(`Added task ${task.id} to transcript.`, "info");
+      await refreshStatus(ctx);
+    },
+  });
+
+  pi.registerCommand("bg-show-swarm", {
+    description: "Show grouped details for a background worker swarm (usage: /bg-show-swarm <swarm-id>)",
+    handler: async (args, ctx) => {
+      const swarmId = parseRequiredId(args);
+      if (!swarmId) {
+        ctx.ui.notify("Usage: /bg-show-swarm <swarm-id>", "warning");
+        return;
+      }
+      const activeRuntime = await ensureRuntime();
+      const tasks = await activeRuntime.getSwarmTasks(swarmId);
+      if (tasks.length === 0) {
+        ctx.ui.notify(`Swarm not found: ${swarmId}`, "warning");
+        return;
+      }
+      const results = await Promise.all(tasks.map((task) => activeRuntime.getTaskResult(task.id)));
+      clearPersistentWidget(ctx);
+      showTranscriptPanel(`Background swarm ${swarmId}`, buildSwarmDetailWidget(swarmId, tasks, results), { command: "bg-show-swarm", swarmId });
+      ctx.ui.notify(`Added swarm ${swarmId} to transcript.`, "info");
+      await refreshStatus(ctx);
+    },
+  });
+
+  pi.registerCommand("bg-cancel-swarm", {
+    description: "Cancel queued/running tasks in a background worker swarm (usage: /bg-cancel-swarm <swarm-id>)",
+    handler: async (args, ctx) => {
+      const swarmId = parseRequiredId(args);
+      if (!swarmId) {
+        ctx.ui.notify("Usage: /bg-cancel-swarm <swarm-id>", "warning");
+        return;
+      }
+      const activeRuntime = await ensureRuntime();
+      const cancelled = await activeRuntime.cancelSwarm(swarmId);
+      if (cancelled.tasks.length === 0) {
+        ctx.ui.notify(`Swarm not found: ${swarmId}`, "warning");
+        return;
+      }
+      clearPersistentWidget(ctx);
+      showTranscriptPanel(`Background swarm ${swarmId}`, buildSwarmCancelWidget(swarmId, cancelled.accepted, cancelled.rejected, cancelled.tasks), { command: "bg-cancel-swarm", swarmId });
+      ctx.ui.notify(`Cancellation requested for swarm ${swarmId}.`, "info");
       await refreshStatus(ctx);
     },
   });
@@ -513,14 +903,22 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
     },
   });
 
+  const TaskPrioritySchema = Type.Optional(Type.Union([
+    Type.Literal("low"),
+    Type.Literal("normal"),
+    Type.Literal("high"),
+  ], { description: "Optional task priority." }));
+
+  const ToolAllowListSchema = Type.Optional(Type.Array(Type.String({ description: "Tool name" }), { description: "Optional tool allow-list passed to Pi." }));
+
   const delegateTaskTool = defineTool({
     name: "delegate_task",
     label: "Delegate Task",
-    description: "Launch a bounded background Pi worker so the main conversation can stay available.",
-    promptSnippet: "delegate_task(task, title?, cwd?, model?, timeoutMinutes?, tools?, priority?, waitForResult?) — launch a background worker and return task tracking info.",
+    description: "Launch one bounded background Pi worker so the main conversation can stay available.",
+    promptSnippet: "delegate_task(task, title?, cwd?, model?, timeoutMinutes?, tools?, priority?, waitForResult?) — launch one background worker and return task tracking info.",
     promptGuidelines: [
-      "Use delegate_task for long-running, parallelizable, or noisy work that does not need to monopolize the current turn.",
-      "Prefer delegate_task over blocking yourself on long implementation or audit runs when the user may want to keep chatting.",
+      "Use delegate_task for one long-running or noisy work strand that does not need to monopolize the current turn.",
+      "If the work naturally splits into independent strands, prefer delegate_swarm instead of making only one vague worker.",
       "delegate_task is background-first; in v0 waitForResult is ignored and the task is still launched asynchronously.",
     ],
     parameters: Type.Object({
@@ -529,12 +927,8 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
       cwd: Type.Optional(Type.String({ description: "Optional working directory override." })),
       model: Type.Optional(Type.String({ description: "Optional model override for the worker." })),
       timeoutMinutes: Type.Optional(Type.Number({ description: "Optional timeout override in minutes." })),
-      tools: Type.Optional(Type.Array(Type.String({ description: "Tool name" }), { description: "Optional tool allow-list passed to Pi." })),
-      priority: Type.Optional(Type.Union([
-        Type.Literal("low"),
-        Type.Literal("normal"),
-        Type.Literal("high"),
-      ], { description: "Optional task priority." })),
+      tools: ToolAllowListSchema,
+      priority: TaskPrioritySchema,
       waitForResult: Type.Optional(Type.Boolean({ description: "Ignored in v0; background launch still returns immediately." })),
     }),
     async execute(_toolCallId, params: DelegateTaskParams, _signal, _onUpdate, ctx: ExtensionContext) {
@@ -547,5 +941,54 @@ export default function backgroundWorkersExtension(pi: ExtensionAPI): void {
     },
   });
 
+  const SwarmTaskSchema = Type.Object({
+    task: Type.String({ description: "A bounded worker objective within the swarm." }),
+    title: Type.Optional(Type.String({ description: "Short task title for displays." })),
+    role: Type.Optional(Type.String({ description: "Optional role label such as scout, implementer, reviewer, docs, frontend, or backend." })),
+    taskType: Type.Optional(Type.String({ description: "Optional task taxonomy label: scout, research, implementation, verification, audit, summarization, or adoption_review." })),
+    roleHint: Type.Optional(Type.String({ description: "Optional extra role guidance." })),
+    parentTaskId: Type.Optional(Type.String({ description: "Optional parent/coordinator task id." })),
+    cancellationGroup: Type.Optional(Type.String({ description: "Optional cancellation group; defaults to swarm id." })),
+    acceptanceCriteria: Type.Optional(Type.String({ description: "What this worker should satisfy before reporting done." })),
+    expectedArtifacts: Type.Optional(Type.Array(Type.String(), { description: "Expected output artifacts or evidence refs." })),
+    riskLevel: Type.Optional(Type.String({ description: "Optional risk label such as low, medium, or high." })),
+    cwd: Type.Optional(Type.String({ description: "Optional working directory override for this worker." })),
+    model: Type.Optional(Type.String({ description: "Optional model override for this worker." })),
+    timeoutMinutes: Type.Optional(Type.Number({ description: "Optional timeout override in minutes for this worker." })),
+    tools: ToolAllowListSchema,
+    priority: TaskPrioritySchema,
+  }, { additionalProperties: false });
+
+  const delegateSwarmTool = defineTool({
+    name: "delegate_swarm",
+    label: "Delegate Swarm",
+    description: "Launch 2-8 related background Pi workers in one call for parallelizable work strands.",
+    promptSnippet: "delegate_swarm({ tasks: [{ task, title?, role? }, ...], objective?, cwd?, model?, timeoutMinutes?, tools?, priority?, waitForResults? }) — fan out a small background worker swarm.",
+    promptGuidelines: [
+      "Prefer delegate_swarm for non-trivial requests with independent research, implementation, review, docs, frontend/backend, or multi-area codebase strands.",
+      "Use 2-4 focused workers for most swarms; only use more when the task genuinely has more independent slices.",
+      "Make each worker objective concrete, bounded, and non-overlapping. You remain the coordinator and synthesizer.",
+      "delegate_swarm is background-first; in v0 waitForResults is ignored and workers are launched asynchronously under the runtime concurrency cap.",
+    ],
+    parameters: Type.Object({
+      objective: Type.Optional(Type.String({ description: "Optional shared objective or coordination note for the whole swarm." })),
+      tasks: Type.Array(SwarmTaskSchema, { minItems: 2, maxItems: MAX_SWARM_TASKS, description: "Worker objectives to launch as one swarm." }),
+      cwd: Type.Optional(Type.String({ description: "Shared working directory override for workers that do not specify cwd." })),
+      model: Type.Optional(Type.String({ description: "Shared model override for workers that do not specify model." })),
+      timeoutMinutes: Type.Optional(Type.Number({ description: "Shared timeout override in minutes." })),
+      tools: ToolAllowListSchema,
+      priority: TaskPrioritySchema,
+      waitForResults: Type.Optional(Type.Boolean({ description: "Ignored in v0; swarm launch still returns immediately." })),
+    }, { additionalProperties: false }),
+    async execute(_toolCallId, params: DelegateSwarmParams, _signal, _onUpdate, ctx: ExtensionContext) {
+      const waitForResults = Boolean(params.waitForResults);
+      const swarm = await launchSwarm(params, ctx);
+      await announceSwarmLaunch(swarm.swarmId, swarm.tasks, ctx, waitForResults);
+      await refreshStatus(ctx);
+      return buildDelegateSwarmResult(swarm.swarmId, swarm.tasks, waitForResults);
+    },
+  });
+
   pi.registerTool(delegateTaskTool);
+  pi.registerTool(delegateSwarmTool);
 }

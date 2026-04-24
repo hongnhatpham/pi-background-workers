@@ -27,7 +27,7 @@ By the end of v0, the package should support:
 - inspecting tasks later from Pi commands
 - cancelling running tasks
 - returning normalized final results
-- exposing a `delegate_task` tool for the main assistant
+- exposing `delegate_task` and `delegate_swarm` tools for the main assistant
 
 Not required for v0:
 
@@ -236,9 +236,12 @@ Expose background work controls to the user.
 
 - [x] Add `src/index.ts`
 - [x] Register `/bg`
+- [x] Register `/bg-swarm`
 - [x] Register `/bg-list`
 - [x] Register `/bg-show`
 - [x] Register `/bg-cancel`
+- [x] Register `/bg-show-swarm`
+- [x] Register `/bg-cancel-swarm`
 - [x] Register `/bg-results`
 - [x] Add compact human-readable rendering for each command
 - [x] Add footer/status summary if cheap and stable
@@ -250,6 +253,12 @@ Expose background work controls to the user.
 - creates a task
 - launches now if capacity exists, otherwise queues
 - returns task id and current status
+
+#### `/bg-swarm <task one || task two || ...>`
+
+- creates multiple related tasks with a shared swarm id
+- launches up to the runtime concurrency cap and queues the rest
+- returns one visible transcript launch message for the whole swarm
 
 #### `/bg-list`
 
@@ -265,6 +274,15 @@ Expose background work controls to the user.
 
 - requests cancellation
 - reports whether cancellation was accepted
+
+#### `/bg-show-swarm <swarm-id>`
+
+- renders grouped swarm task status and compact result summaries
+
+#### `/bg-cancel-swarm <swarm-id>`
+
+- requests cancellation for queued/running tasks in the swarm
+- preserves partial finished results
 
 #### `/bg-results <id>`
 
@@ -286,6 +304,7 @@ Let the main assistant delegate work programmatically.
 ### Tasks
 
 - [x] Register `delegate_task`
+- [x] Register `delegate_swarm`
 - [x] Define input schema:
   - [x] `task`
   - [x] optional `title`
@@ -294,15 +313,17 @@ Let the main assistant delegate work programmatically.
   - [x] optional `timeoutMinutes`
   - [x] optional `tools`
   - [x] optional `priority`
-  - [x] optional `waitForResult` (likely disabled or ignored in v0)
+  - [x] optional `waitForResult` (disabled/ignored in v0)
 - [x] Tool should create and launch a background task
 - [x] Tool should return quickly by default
 - [x] Tool result should include task id + inspection hints
+- [x] `delegate_swarm` should accept 2-8 bounded worker objectives and stamp them with a shared swarm id
 - [ ] Add tool rendering if useful
 
 ### Acceptance criteria
 
 - main assistant can launch background work without monopolizing the conversation
+- main assistant can fan out independent strands in one tool call
 - tool behavior is background-first by default
 
 ---
@@ -337,6 +358,8 @@ Use the package on real work before adding more features.
 
 - Worker completion originally required manual polling; this is now addressed with automatic completion handoff messages.
 - Worker output quality can still be poor even on successful runs; result validation now marks malformed reports and surfaces validation issues, but the worker prompt likely needs further hardening during dogfooding.
+- The main assistant previously underused delegation; the extension now injects stronger per-turn swarm guidance for foreground sessions, explicit launch-shape suggestions, and exposes `delegate_swarm` plus `/swarm`/`/delegate` aliases for cheap fan-out.
+- Background worker child sessions explicitly do not receive the foreground swarm policy injection, preventing recursive delegation pressure inside disposable workers.
 - Existing finished tasks with `reportedAt: null` may be reported once after reload, which is acceptable for now but not yet polished.
 
 ---
@@ -398,7 +421,7 @@ v0 is done when all of the following are true:
 - I can inspect task state later
 - I can cancel a running task
 - I can retrieve a final result cleanly
-- the main assistant can delegate with `delegate_task`
+- the main assistant can delegate with `delegate_task` and fan out with `delegate_swarm`
 - reloads do not destroy visibility into running/recent tasks
 
 ---

@@ -19,6 +19,15 @@ export interface LaunchTaskInput {
   tools?: string[] | null;
   priority?: TaskPriority;
   timeoutMinutes?: number | null;
+  swarmId?: string | null;
+  swarmRole?: string | null;
+  taskType?: string | null;
+  roleHint?: string | null;
+  parentTaskId?: string | null;
+  cancellationGroup?: string | null;
+  acceptanceCriteria?: string | null;
+  expectedArtifacts?: string[] | null;
+  riskLevel?: string | null;
 }
 
 export interface TaskList {
@@ -98,9 +107,8 @@ export class BackgroundWorkerRuntime {
     this.runningHandles.clear();
   }
 
-  async launchTask(input: LaunchTaskInput): Promise<TaskRecord> {
-    const createdAt = this.now();
-    const task: TaskRecord = {
+  private buildQueuedTask(input: LaunchTaskInput, createdAt = this.now()): TaskRecord {
+    return {
       id: buildTaskId(createdAt),
       title: input.title?.trim() || input.task.trim().slice(0, 80),
       task: input.task,
@@ -120,7 +128,21 @@ export class BackgroundWorkerRuntime {
       latestNote: "Queued",
       resultSummary: null,
       reportedAt: null,
+      swarmId: input.swarmId ?? null,
+      swarmRole: input.swarmRole ?? input.roleHint ?? null,
+      taskType: input.taskType ?? null,
+      roleHint: input.roleHint ?? input.swarmRole ?? null,
+      parentTaskId: input.parentTaskId ?? null,
+      cancellationGroup: input.cancellationGroup ?? input.swarmId ?? null,
+      acceptanceCriteria: input.acceptanceCriteria ?? null,
+      expectedArtifacts: input.expectedArtifacts ?? null,
+      riskLevel: input.riskLevel ?? null,
     };
+  }
+
+  private async createQueuedTask(input: LaunchTaskInput): Promise<TaskRecord> {
+    const createdAt = this.now();
+    const task = this.buildQueuedTask(input, createdAt);
 
     await this.store.createTask(task);
     await this.store.appendEvent({
@@ -131,15 +153,28 @@ export class BackgroundWorkerRuntime {
       payload: { cwd: task.cwd, priority: task.priority },
     });
 
+    return (await this.store.getTask(task.id)) ?? task;
+  }
+
+  async launchTask(input: LaunchTaskInput): Promise<TaskRecord> {
+    const task = await this.createQueuedTask(input);
     await this.pumpQueue();
     return (await this.store.getTask(task.id)) ?? task;
+  }
+
+  async launchTasks(inputs: LaunchTaskInput[]): Promise<TaskRecord[]> {
+    const created: TaskRecord[] = [];
+    for (const input of inputs) created.push(await this.createQueuedTask(input));
+    await this.pumpQueue();
+    const refreshed = await Promise.all(created.map((task) => this.store.getTask(task.id)));
+    return refreshed.map((task, index) => task ?? created[index]);
   }
 
   async cancelTask(taskId: string): Promise<{ accepted: boolean; task: TaskRecord | null }> {
     const handle = this.runningHandles.get(taskId);
     if (handle) {
-      handle.cancel();
-      return { accepted: true, task: await this.store.getTask(taskId) };
+      const task = await handle.cancel();
+      return { accepted: true, task: task ?? await this.store.getTask(taskId) };
     }
 
     const task = await this.store.getTask(taskId);
@@ -179,8 +214,26 @@ export class BackgroundWorkerRuntime {
     return { accepted: true, task: cancelled };
   }
 
+  async cancelSwarm(swarmId: string): Promise<{ swarmId: string; accepted: number; rejected: number; tasks: TaskRecord[] }> {
+    const tasks = (await this.store.listTasks()).filter((task) => task.swarmId === swarmId || task.cancellationGroup === swarmId);
+    let accepted = 0;
+    let rejected = 0;
+    const updated: TaskRecord[] = [];
+    for (const task of tasks) {
+      const result = await this.cancelTask(task.id);
+      if (result.accepted) accepted += 1;
+      else rejected += 1;
+      if (result.task) updated.push(result.task);
+    }
+    return { swarmId, accepted, rejected, tasks: updated };
+  }
+
   async getTask(taskId: string): Promise<TaskRecord | null> {
     return this.store.getTask(taskId);
+  }
+
+  async getSwarmTasks(swarmId: string): Promise<TaskRecord[]> {
+    return (await this.store.listTasks()).filter((task) => task.swarmId === swarmId || task.cancellationGroup === swarmId);
   }
 
   async getTaskResult(taskId: string): Promise<TaskResult | null> {

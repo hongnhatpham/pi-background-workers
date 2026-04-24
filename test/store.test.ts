@@ -40,6 +40,15 @@ function makeTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
     latestNote: null,
     resultSummary: null,
     reportedAt: null,
+    swarmId: null,
+    swarmRole: null,
+    taskType: null,
+    roleHint: null,
+    parentTaskId: null,
+    cancellationGroup: null,
+    acceptanceCriteria: null,
+    expectedArtifacts: null,
+    riskLevel: null,
     ...overrides,
   };
 }

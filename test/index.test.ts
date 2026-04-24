@@ -6,6 +6,12 @@ import {
   buildCompletionMessage,
   buildLaunchMessage,
   buildStatusText,
+  buildSwarmCancelWidget,
+  buildSwarmDetailWidget,
+  buildSwarmLaunchMessage,
+  assessSwarmOpportunity,
+  buildSwarmPolicyPrompt,
+  buildSuggestedSwarmShape,
   buildTaskDetailWidget,
   buildTaskListWidget,
   buildTaskResultWidget,
@@ -35,6 +41,15 @@ function makeTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
     latestNote: "Inspecting Vite CSS output",
     resultSummary: null,
     reportedAt: null,
+    swarmId: null,
+    swarmRole: null,
+    taskType: null,
+    roleHint: null,
+    parentTaskId: null,
+    cancellationGroup: null,
+    acceptanceCriteria: null,
+    expectedArtifacts: null,
+    riskLevel: null,
     ...overrides,
   };
 }
@@ -59,6 +74,11 @@ test("formatTaskLine includes status id title and note", () => {
   const line = formatTaskLine(makeTask());
   assert.match(line, /^\[running\] task-1 · Investigate stale CSS on homepage/);
   assert.match(line, /Inspecting Vite CSS output/);
+});
+
+test("formatTaskLine includes swarm metadata when present", () => {
+  const line = formatTaskLine(makeTask({ swarmId: "swarm-1", swarmRole: "scout" }));
+  assert.match(line, /task-1 · swarm swarm-1\/scout · Investigate stale CSS/);
 });
 
 test("buildStatusText summarizes running queued and recent buckets", () => {
@@ -111,6 +131,38 @@ test("buildLaunchMessage makes delegated work visible and inspectable", () => {
   assert.equal(launch.details.showCommand, "/bg-show task-1");
   assert.equal(launch.details.resultsCommand, "/bg-results task-1");
   assert.equal(launch.details.cancelCommand, "/bg-cancel task-1");
+});
+
+test("buildSwarmDetailWidget renders grouped swarm tasks", () => {
+  const lines = buildSwarmDetailWidget("swarm-1", [
+    makeTask({ id: "task-1", swarmId: "swarm-1", swarmRole: "scout", status: "succeeded", latestNote: "Mapped files" }),
+    makeTask({ id: "task-2", swarmId: "swarm-1", swarmRole: "reviewer", status: "queued" }),
+  ]);
+  assert.ok(lines.includes("Swarm: swarm-1"));
+  assert.ok(lines.some((line) => line.includes("succeeded=1")));
+  assert.ok(lines.some((line) => line.includes("task-1 [succeeded] scout")));
+});
+
+test("buildSwarmCancelWidget renders plan-level cancellation", () => {
+  const lines = buildSwarmCancelWidget("swarm-1", 1, 1, [
+    makeTask({ id: "task-1", swarmId: "swarm-1", status: "cancelled" }),
+    makeTask({ id: "task-2", swarmId: "swarm-1", status: "succeeded" }),
+  ]);
+  assert.ok(lines.includes("Swarm cancellation requested: swarm-1"));
+  assert.ok(lines.includes("Accepted: 1"));
+  assert.ok(lines.some((line) => line.includes("task-2 [succeeded]")));
+});
+
+test("buildSwarmLaunchMessage makes a swarm visible and inspectable", () => {
+  const launch = buildSwarmLaunchMessage("swarm-1", [
+    makeTask({ id: "task-1", swarmId: "swarm-1", swarmRole: "scout" }),
+    makeTask({ id: "task-2", swarmId: "swarm-1", swarmRole: "reviewer" }),
+  ], true);
+  assert.match(launch.content, /Background worker swarm started: swarm-1/);
+  assert.match(launch.content, /task-1 \[running\] scout/);
+  assert.match(launch.content, /waitForResults is ignored/);
+  assert.equal(launch.details.taskCount, 2);
+  assert.deepEqual(launch.details.tasks.map((task) => task.taskId), ["task-1", "task-2"]);
 });
 
 test("buildCompletionMessage includes summary and inspection commands", () => {
@@ -169,4 +221,39 @@ test("summarizeCompletion collapses short pure file listings", () => {
     ].join("\n"),
   }));
   assert.equal(summary, "Worker finished but returned an unstructured file listing instead of a usable summary.");
+});
+
+test("assessSwarmOpportunity classifies multi-strand coding work as swarm-worthy", () => {
+  const assessment = assessSwarmOpportunity("Investigate this extension, implement a fix, and add tests/review across the repo in parallel");
+  assert.equal(assessment.level, "explicit");
+  assert.ok(assessment.reasons.length >= 3);
+});
+
+test("assessSwarmOpportunity treats delegation-system requests as explicit swarm opportunities", () => {
+  const assessment = assessSwarmOpportunity("Evolve delegation into an agent swarm system and parallelize as much task as makes sense");
+  assert.equal(assessment.level, "explicit");
+  assert.ok(assessment.reasons.some((reason) => reason.includes("explicitly")));
+  assert.ok(assessment.reasons.some((reason) => reason.includes("architecture")));
+});
+
+test("buildSuggestedSwarmShape proposes bounded worker slices", () => {
+  const lines = buildSuggestedSwarmShape({
+    level: "swarm",
+    reasons: [
+      "there is a reconnaissance strand",
+      "there is an architecture or planning strand",
+      "there is a verification strand",
+    ],
+  });
+  assert.ok(lines.some((line) => line.includes("scout/recon")));
+  assert.ok(lines.some((line) => line.includes("architecture/planning")));
+  assert.ok(lines.some((line) => line.includes("verification/review")));
+});
+
+test("buildSwarmPolicyPrompt advertises delegate_swarm", () => {
+  const prompt = buildSwarmPolicyPrompt("Implement and review a multi-file package change");
+  assert.match(prompt, /Background worker swarm policy/);
+  assert.match(prompt, /delegate_swarm/);
+  assert.match(prompt, /2-4 workers/);
+  assert.match(prompt, /delegation triage/);
 });

@@ -42,6 +42,15 @@ export interface TaskRecord {
   latestNote: string | null;
   resultSummary: string | null;
   reportedAt: string | null;
+  swarmId: string | null;
+  swarmRole: string | null;
+  taskType?: string | null;
+  roleHint?: string | null;
+  parentTaskId?: string | null;
+  cancellationGroup?: string | null;
+  acceptanceCriteria?: string | null;
+  expectedArtifacts?: string[] | null;
+  riskLevel?: string | null;
 }
 
 export interface TaskResult {

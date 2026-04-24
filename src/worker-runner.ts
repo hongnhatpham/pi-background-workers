@@ -18,7 +18,7 @@ export interface WorkerRunOptions {
 export interface WorkerHandle {
   taskId: string;
   pid: number;
-  cancel: () => void;
+  cancel: () => Promise<TaskRecord | null>;
   finished: Promise<TaskRecord>;
 }
 
@@ -307,8 +307,8 @@ export async function runWorkerInBackground(options: WorkerRunOptions): Promise<
   return {
     taskId: task.id,
     pid: child.pid ?? -1,
-    cancel: () => {
-      if (finalized || cancelRequested) return;
+    cancel: async () => {
+      if (finalized || cancelRequested) return latestTask;
       cancelRequested = true;
       const at = now();
       latestTask = {
@@ -317,14 +317,15 @@ export async function runWorkerInBackground(options: WorkerRunOptions): Promise<
         updatedAt: at,
         latestNote: "Cancellation requested",
       };
-      void store.updateTask(latestTask);
-      void store.appendEvent({
+      await store.updateTask(latestTask);
+      await store.appendEvent({
         taskId: task.id,
         at,
         kind: "task.cancel_requested",
         message: "Cancellation requested",
       });
       child.kill("SIGTERM");
+      return latestTask;
     },
     finished,
   };
